@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import grandmaImage from '../../public/images/grandma-profile.png';
 import { speak } from '../voice/grandma-voice';
+import { GRANDMA_GREETING } from '../voice/persona';
 import type { VoiceStatus } from '../voice/useVoice';
 import { playDemoSound } from './demo-audio';
 
 /** Scripted fallback used only when the realtime voice agent is unavailable. */
-export const GREETING = 'Honey, I’m trapped in the bathroom and it’s flooding in here! Can you help me get out of this pickle?';
+export const GREETING = GRANDMA_GREETING;
 export const RULES = [
   'Grandma only does what you tell her.',
   'You have five minutes before the room floods.',

@@ -13,7 +13,7 @@ npm ci
 npm run dev
 ```
 
-Voice: copy `.env.example` to `.env.local` and set `OPENAI_API_KEY`, then restart the dev server. Starting the call connects Grandma (`gpt-realtime-2.1-mini` over WebRTC via the OpenAI Agents SDK); allow microphone access and talk to her. The key stays in the local Vite server, which mints short-lived client secrets at `POST /api/realtime-token`. Optional `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` settings route Grandma’s spoken lines through the server’s `POST /api/speak` proxy; otherwise Realtime supplies her live voice. Scripted fallback lines use browser speech synthesis. Voice code lives in `src/voice/`.
+Voice: copy `.env.example` to `.env.local` and set your own `OPENAI_API_KEY`, then restart the dev server. Starting the call connects Grandma (`gpt-realtime-2.1-mini` over WebRTC via the OpenAI Agents SDK); allow microphone access and talk to her. OpenAI supplies both understanding and spoken replies. The key stays in the local Vite server, which mints short-lived client secrets at `POST /api/realtime-token`. Scripted fallback lines use browser speech synthesis and typing remains available if voice fails. No ElevenLabs key is needed. Voice code lives in `src/voice/`.
 
 Open the printed localhost URL. The game is a portrait phone screen, as if you were video-calling Grandma. Press Start, answer her incoming call, and follow the turn prompts to speak. The mic button connects or retries voice and lets you finish or take a turn. When voice is unavailable, type instructions in the field at the bottom and press Enter during your turn. Typed text uses a small keyword matcher in `src/voice/text-commands.ts` and the `gameCommands` bridge; type `help` for example phrases. The call opens on the front camera, looking at Grandma; asking her to switch to the rear camera is part of the challenge. The quickest typed win is `switch to the rear camera, go to the toolboxes, open the red toolbox, open the blue toolbox, open the green toolbox, pick up the wrench, walk to the pipe, bend down, turn the pipe counterclockwise`. Typed `tighten the pipe` also seals the red pipe; an explicit `clockwise` instruction worsens the leak, including `tighten the pipe clockwise`. Compound lines split on commas, “then” and “and”, and stop at the first failed step.
 
@@ -34,7 +34,8 @@ There is no developer console anymore; the scripted presets in `src/game/presets
 - Five minutes to flooding with no intervention. One-use towels and bucket add at most 30 and 45 seconds at the initial leak rate; they cannot solve the leak.
 - Seeded stress-dependent ambiguity (15/30/45%). Precise instructions have no random interpretation failures. Unclear targets/directions return structured clarification results.
 - Cancellation at safe points, pause/resume, full reset, stale-run rejection, progress/results/terminal events and a bounded queue.
-- Realtime microphone input, language interpretation and dialogue through the OpenAI Agents SDK; optional ElevenLabs speech output; typed fallback commands and a call transcript showing results, clarifications and misunderstandings.
+- Native OpenAI Realtime microphone input, language interpretation and spoken dialogue; typed fallback commands and a call transcript showing results, clarifications and misunderstandings.
+- An original ornery Brooklyn grandma: affectionate exasperation, dry humor, intelligible regional pronunciation and brief bursts of panic. The shared direction in `src/voice/persona.ts` governs the agent, greeting and final spoken lines. The current audition uses the built-in `marin` voice at speed 1.1; accent and perceived age still need a real listening test.
 
 ## Team handoff
 

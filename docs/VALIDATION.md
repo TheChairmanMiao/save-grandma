@@ -2,13 +2,13 @@
 
 ## Current local checks
 
-On 2026-11-04, **100 tests passed**, TypeScript passed, and Vite produced the production build. These checks verify deterministic simulation, command-session behavior, typed parsing, voice-tool execution, voice connection/playback lifecycle and the presentation contract. They do not verify a live provider conversation.
+On 2026-11-04, after selecting native OpenAI speech and the Brooklyn Grandma persona, **99 tests passed**, TypeScript passed, and Vite produced the production build. These checks verify deterministic simulation, command-session behavior, typed parsing, voice-tool execution, voice connection/playback lifecycle and the presentation contract. They do not verify a live provider conversation or the requested accent.
 
 Coverage includes the wrench solution, five-minute flooding, bounded towels/bucket, wrong rotations, tools, posture, reach, hands, blocked paths, seeded ambiguity, precise qualifiers, clarification, phone placement/retrieval, reference frames, sequencing, cancellation, pause/resume, reset, stale requests and terminal outcomes. Typed-command regressions verify that “tighten the pipe” seals the red pipe counterclockwise while an explicit clockwise instruction worsens the leak.
 
 The command-session tests exercise fail-fast sequencing, duplicate deliveries, stale turns, abort/reset/dispose, synchronous cancellation races and pause/resume. Presentation tests exercise opposing phone lenses, fixed shelf cameras, continuous bend/turn/look motion and animation state. These are code-level checks rather than proof of live voice quality or device performance.
 
-Nineteen offline voice tests cover token failure before microphone access, duplicate connects, connection timeouts, late streams after retry/unmount, stale SDK events, provider disconnects, normal session expiry, output interruption, cancellation settlement, and audio cache cleanup. SDK/media resources are mocked; hook tests use a minimal harness, so real browser permissions and live provider playback remain separate checks.
+Eighteen offline voice tests cover native audio output despite legacy provider settings, token failure before microphone access, duplicate connects, connection timeouts, late streams after retry/unmount, stale SDK events, provider disconnects, normal session expiry, output interruption, cancellation settlement, and bounded local browser speech. The speech fallback makes no TTS requests. SDK/media resources are mocked; hook tests use a minimal harness, so real browser permissions and live provider playback remain separate checks.
 
 ## Local Chrome browser check
 
@@ -41,9 +41,11 @@ The smoke script requires the selected browser to be installed. It drives title/
 ## Remaining verification
 
 - Complete the repair using a real microphone and configured Realtime service; confirm dialogue, tool execution, interruption, reconnect and reset.
-- When ElevenLabs is enabled, confirm streamed speech, fallback behavior and immediate silence on interruption.
+- Listen to the selected OpenAI voice in a real session: confirm intelligibility, Brooklyn pronunciation, affectionate irritation and brief panic without prolonged shrieking. Check the same character during greeting, tool results and terminal lines.
 - Verify the deployed server routes with server-side credentials before claiming hosted voice works. Local Vite middleware alone does not establish a production backend.
 - Check actual mobile devices, Safari and Edge, including microphone permission denial, on-screen keyboard behavior and WebGL availability.
 - Recheck phone placement/retrieval, action framing, water and terminal overlays in the rendered app after presentation changes.
 
-The current scene has no occlusion-aware perception or general pathfinding. Room boundaries, the tool table and toilet have collision checks. The single-session game does not require saved games or multiplayer synchronization. No public deployment has been verified in this validation record.
+The initial public typed preview at https://save-grandma-demo.resoluteflame.chatgpt.site passed a full unauthenticated Chrome playthrough, replay, camera, clarification, help/pause and hidden-intro checks on 2026-11-04, with no browser errors or paid voice endpoint requests. This verifies typed play, not hosted live voice.
+
+The current scene has no occlusion-aware perception or general pathfinding. Room boundaries, the tool table and toilet have collision checks. The single-session game does not require saved games or multiplayer synchronization.

@@ -49,8 +49,8 @@ try {
   await page.waitForTimeout(11000);
   assert.equal(await page.getByLabel('Tell Grandma what to do').isEnabled(), true, 'Typed play must not expire after ten seconds');
   await tell('go to the toolboxes, open the red toolbox, open the blue toolbox, open the green toolbox, pick up the wrench, walk to the pipe, bend down, tighten the pipe');
-  await page.getByRole('heading', { name: 'Sweetie, you saved me!' }).waitFor({ timeout: 60000 });
-  await page.screenshot({ path: `artifacts/${channel}-wrench-win.png` });
+  await page.getByRole('heading', { name: 'You did good, sweetheart. Don’t let it go to your head.' }).waitFor({ timeout: 60000 });
+  await page.screenshot({ path: `artifacts/${channel}-wrench-win.png`, animations: 'disabled' });
   checks.push('Wrench solution typed through the command session');
   await page.getByRole('button', { name: 'Play again' }).click();
   // Play again may drop back to the title or straight into a new call; handle both.

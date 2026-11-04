@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RealtimeItem, RealtimeSession } from '@openai/agents/realtime';
 import { GRANDMA_SPEED, GRANDMA_VOICE, REALTIME_MODEL } from './model';
-import { ELEVENLABS_ENABLED, onSpeaking, speak, stopSpeaking } from './grandma-voice';
+import { GRANDMA_GREETING, GRANDMA_VOICE_STYLE } from './persona';
+import { onSpeaking, stopSpeaking } from './grandma-voice';
 
 export type VoiceStatus = 'idle' | 'microphone' | 'connecting' | 'connected' | 'error';
 
@@ -28,21 +29,6 @@ async function fetchClientSecret(signal: AbortSignal) {
   return data.value;
 }
 
-// With ElevenLabs, the model only writes text; each complete sentence is queued for playback.
-const SENTENCE_END = /[.!?…]+["”’)]?\s+/;
-function speakSentences(buffer: string, flush: boolean) {
-  let rest = buffer;
-  for (;;) {
-    const match = SENTENCE_END.exec(rest);
-    if (!match) break;
-    const end = match.index + match[0].length;
-    void speak(rest.slice(0, end));
-    rest = rest.slice(end);
-  }
-  if (flush && rest.trim()) { void speak(rest); rest = ''; }
-  return rest;
-}
-
 function lastTranscript(history: RealtimeItem[], role: 'user' | 'assistant') {
   for (let i = history.length - 1; i >= 0; i--) {
     const item = history[i];
@@ -64,9 +50,6 @@ type Attempt = {
   session: RealtimeSession | null;
   timer: ReturnType<typeof setTimeout> | null;
   tokenTimer: ReturnType<typeof setTimeout> | null;
-  pendingText: string;
-  responseId: string;
-  interruptedResponseId: string;
 };
 
 /** One Realtime voice session with Grandma, connected to the shared game controller through tools. */
@@ -100,7 +83,6 @@ export function useVoice() {
     attempt.abort.abort();
     if (attempt.timer) clearTimeout(attempt.timer);
     if (attempt.tokenTimer) clearTimeout(attempt.tokenTimer);
-    attempt.pendingText = '';
     // Invalidate callbacks before closing; the SDK emits connection_change while closing.
     try { attempt.session?.close(); } catch { /* Continue releasing caller-owned resources. */ }
     attempt.stream?.getTracks().forEach(track => track.stop());
@@ -129,7 +111,7 @@ export function useVoice() {
     void audio.play().catch(() => {});
     const attempt: Attempt = {
       generation: ++generation.current, abort: new AbortController(), audio,
-      stream: null, session: null, timer: null, tokenTimer: null, pendingText: '', responseId: '', interruptedResponseId: '',
+      stream: null, session: null, timer: null, tokenTimer: null,
     };
     active.current = attempt;
     setStatus('connecting');
@@ -173,7 +155,7 @@ export function useVoice() {
         const s = new RealtimeSession(grandmaAgent, {
           transport, model: REALTIME_MODEL,
           config: {
-            ...(ELEVENLABS_ENABLED ? { outputModalities: ['text'] } : {}),
+            outputModalities: ['audio'],
             audio: {
               input: { transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' }, turnDetection: { type: 'semantic_vad', eagerness: 'high', createResponse: false, interruptResponse: false } },
               output: { voice: GRANDMA_VOICE, speed: GRANDMA_SPEED },
@@ -184,19 +166,6 @@ export function useVoice() {
         transport.on('connection_change', state => {
           if (state === 'disconnected' && isCurrent(attempt)) fail('The voice call disconnected. You can type or reconnect the microphone.');
         });
-        if (ELEVENLABS_ENABLED) {
-          transport.on('output_text_delta', event => {
-            if (!isCurrent(attempt) || holdOutputMuted.current || event.responseId === attempt.interruptedResponseId) return;
-            if (event.responseId !== attempt.responseId) {
-              attempt.pendingText = speakSentences(attempt.pendingText, true);
-              attempt.responseId = event.responseId;
-            }
-            attempt.pendingText = speakSentences(attempt.pendingText + event.delta, false);
-          });
-          transport.on('*', event => {
-            if (isCurrent(attempt) && event.type === 'response.done') attempt.pendingText = speakSentences(attempt.pendingText, true);
-          });
-        }
         s.on('history_updated', history => {
           if (!isCurrent(attempt)) return;
           setGrandmaSaid(lastTranscript(history, 'assistant'));
@@ -238,12 +207,11 @@ export function useVoice() {
   }, []);
   const greet = useCallback(() => {
     active.current?.session?.transport.sendEvent({ type: 'response.create', response: {
-      instructions: 'Open the call with ONE short, frantic sentence of at most 15 words: you are in the bathroom and water is pouring out from under the sink. Do not call any tools and do not describe the room. Then stop and wait for the caller.',
+      instructions: `${GRANDMA_VOICE_STYLE}\nOpen the call by saying exactly: "${GRANDMA_GREETING}" Use affectionate exasperation and a little urgency. Do not call tools or add another line. Then stop and listen.`,
     } });
   }, []);
   const hush = useCallback(() => {
     const attempt = active.current;
-    if (attempt) { attempt.pendingText = ''; attempt.interruptedResponseId = attempt.responseId; }
     stopSpeaking();
     setSpeaking(false);
     attempt?.session?.interrupt();
@@ -257,8 +225,6 @@ export function useVoice() {
     const attempt = active.current;
     if (attempt) attempt.audio.muted = value;
     if (value && attempt?.session) {
-      attempt.pendingText = '';
-      if (attempt.responseId) attempt.interruptedResponseId = attempt.responseId;
       stopSpeaking();
       setSpeaking(false);
     }
@@ -267,9 +233,8 @@ export function useVoice() {
   const sayLine = useCallback((text: string) => {
     const s = active.current?.session; if (!s) return;
     stopSpeaking();
-    if (active.current) active.current.pendingText = '';
     s.interrupt();
-    s.transport.sendEvent({ type: 'response.create', response: { instructions: `Say exactly this and nothing else, in character: "${text}"` } });
+    s.transport.sendEvent({ type: 'response.create', response: { instructions: `${GRANDMA_VOICE_STYLE}\nSay exactly this line: "${text}" Do not call tools or add commentary. Then stop speaking.` } });
   }, []);
 
   useEffect(() => onSpeaking(value => { if (mounted.current) setSpeaking(value); }), []);

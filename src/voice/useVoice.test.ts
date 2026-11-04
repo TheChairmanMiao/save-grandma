@@ -11,7 +11,7 @@ const harness = vi.hoisted(() => {
     transport: Transport;
     close = vi.fn(); mute = vi.fn(); interrupt = vi.fn(); sendMessage = vi.fn();
     connect = vi.fn(() => state.connectionResults.shift() ?? Promise.resolve());
-    constructor(_agent: unknown, options: { transport: Transport }) { super(); this.transport = options.transport; state.sessions.push(this); }
+    constructor(_agent: unknown, public options: { transport: Transport; config: { outputModalities: string[]; audio: { output: { voice: string } } } }) { super(); this.transport = options.transport; state.sessions.push(this); }
   }
   const state = {
     values: [] as unknown[], cleanups: [] as (() => void)[], sessions: [] as Session[],
@@ -33,7 +33,7 @@ vi.mock('react', () => ({
 }));
 vi.mock('@openai/agents/realtime', () => ({ RealtimeSession: harness.Session, OpenAIRealtimeWebRTC: harness.Transport }));
 vi.mock('./grandma', () => ({ grandmaAgent: {} }));
-vi.mock('./grandma-voice', () => ({ ELEVENLABS_ENABLED: true, speak: harness.speak, stopSpeaking: harness.stopSpeaking, onSpeaking: () => () => {} }));
+vi.mock('./grandma-voice', () => ({ speak: harness.speak, stopSpeaking: harness.stopSpeaking, onSpeaking: () => () => {} }));
 import { useVoice } from './useVoice';
 
 function deferred<T>() {
@@ -55,10 +55,24 @@ beforeEach(() => {
 });
 afterEach(() => {
   harness.cleanups.splice(0).forEach(cleanup => cleanup());
-  vi.useRealTimers(); vi.unstubAllGlobals();
+  vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
 });
 
 describe('voice connection lifecycle without network or microphone access', () => {
+  it('always requests native OpenAI audio even when legacy provider environment values exist', async () => {
+    vi.stubEnv('VITE_ELEVENLABS_VOICE', 'true');
+    vi.stubEnv('ELEVENLABS_API_KEY', 'unused-legacy-value');
+    vi.stubEnv('ELEVENLABS_VOICE_ID', 'unused-legacy-voice');
+    const voice = useVoice();
+    await voice.connect();
+    const session = harness.sessions[0];
+    expect(session.options.config.outputModalities).toEqual(['audio']);
+    session.transport.emit('output_text_delta', { responseId: 'reply', delta: 'Native audio handles this. ' });
+    session.transport.emit('*', { type: 'response.done' });
+    expect(harness.speak).not.toHaveBeenCalled();
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(['/api/realtime-token']);
+  });
+
   it('checks backend availability before asking for the microphone', async () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, json: async () => ({}) } as Response);
     const voice = useVoice();
@@ -169,40 +183,32 @@ describe('voice connection lifecycle without network or microphone access', () =
     expect(harness.values[2]).toBe('Hello dear');
   });
 
-  it('hushes external speech and suppresses late deltas from the interrupted response', async () => {
+  it('hushes native audio and cancels any scripted browser speech', async () => {
     const voice = useVoice();
     await voice.connect();
     const s = harness.sessions[0];
-    s.transport.emit('output_text_delta', { responseId: 'old', delta: 'Oh dear. ' });
-    expect(harness.speak).toHaveBeenCalledWith('Oh dear. ');
+    s.emit('audio_start');
+    expect(harness.values[4]).toBe(true);
     voice.hush();
     expect(harness.stopSpeaking).toHaveBeenCalled();
     expect(s.interrupt).toHaveBeenCalledOnce();
-    harness.speak.mockClear();
-    s.transport.emit('output_text_delta', { responseId: 'old', delta: 'Still talking. ' });
-    expect(harness.speak).not.toHaveBeenCalled();
-    s.transport.emit('output_text_delta', { responseId: 'new', delta: 'Okay. ' });
-    expect(harness.speak).toHaveBeenCalledWith('Okay. ');
+    expect(harness.values[4]).toBe(false);
   });
 
-  it('mutes external voice playback and pending text without stopping standalone fallback speech', async () => {
+  it('mutes a live call without stopping standalone fallback speech when no voice session exists', async () => {
     const voice = useVoice();
     voice.setOutputMuted(true);
     expect(harness.stopSpeaking).not.toHaveBeenCalled();
     voice.setOutputMuted(false);
     await voice.connect();
     const s = harness.sessions[0];
-    s.transport.emit('output_text_delta', { responseId: 'old', delta: 'Unfinished ' });
     s.emit('audio_start');
     voice.setOutputMuted(true);
     expect(harness.stopSpeaking).toHaveBeenCalledOnce();
     expect(harness.values[4]).toBe(false);
     voice.setOutputMuted(false);
-    s.transport.emit('output_text_delta', { responseId: 'old', delta: 'sentence. ' });
-    s.transport.emit('*', { type: 'response.done' });
-    expect(harness.speak).not.toHaveBeenCalled();
-    s.transport.emit('output_text_delta', { responseId: 'new', delta: 'Fresh sentence. ' });
-    expect(harness.speak).toHaveBeenCalledExactlyOnceWith('Fresh sentence. ');
+    s.emit('audio_start');
+    expect(harness.values[4]).toBe(true);
   });
 
   it('releases a permission stream that arrives after unmount', async () => {

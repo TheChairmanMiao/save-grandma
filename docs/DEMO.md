@@ -16,10 +16,14 @@ Use the Node version in `.nvmrc`, run `npm ci`, then `npm run dev`. `npm run che
 
 ## Voice
 
-The existing OpenAI Realtime / optional ElevenLabs implementation is retained. Local voice becomes available when server-side credentials from `.env.example` are configured before starting Vite. Secrets must never use a `VITE_` prefix or enter the browser bundle. SDK code loads only when connecting voice. A voice failure leaves typed play available.
+Jeffrey selected OpenAI Realtime alone with typed fallback for the first voice audition. Local voice becomes available when your own `OPENAI_API_KEY` from `.env.example` is configured before starting Vite. OpenAI generates native speech; there is no ElevenLabs proxy or key configuration. Secrets must never use a `VITE_` prefix or enter the browser bundle. SDK code loads only when connecting voice. A voice failure leaves typed play available.
 
-The static public build intentionally has no paid voice endpoints or credentials. Live voice on a public site still needs production server routes, an operator-approved usage budget and access/issuance controls. The Vite development/preview middleware is not a production voice service. The six-minute client connection limit handles normal call cleanup; it does not enforce a spending cap. Live provider audio requires a separate end-to-end test after that setup.
+`src/voice/persona.ts` defines an original ornery Brooklyn grandmother with affectionate impatience, dry humor, a lightly gravelly lower-middle register, and clear, brisk pronunciation. The agent, opening line and terminal response overrides share that direction. The built-in voice remains `marin`, at speed 1.1. Browser speech for offline scripted lines is a local fallback, not a matching Realtime voice preview. The requested accent and perceived age require a listening test after the key is configured.
+
+The static public build intentionally has no paid voice endpoints or credentials. Live voice on a public site still needs a production `/api/realtime-token` route, an operator-approved usage budget and access/issuance controls. The Vite development/preview middleware is not a production voice service. The six-minute client connection limit handles normal call cleanup; it does not enforce a spending cap. Live provider audio requires a separate end-to-end test after that setup.
 
 ## Publishing
 
-`.openai/hosting.json` identifies the Sites deployment and declares `dist/` as static output. Publish the exact checked source/build through the Sites workflow. The saved Site URL can be linked from Jeffrey's portfolio; no change to that website is required.
+`.openai/hosting.json` identifies the Sites deployment and declares `dist/` as static output. The public typed preview is https://save-grandma-demo.resoluteflame.chatgpt.site. Its first published version passed a full unauthenticated Chrome typed playthrough, replay, camera, clarification and help/pause checks on 2026-11-04.
+
+The sibling `site-source/` folder is the publishing checkout. It retains its own Sites source history and excludes oversized reference GLBs, because the hosting service limits individual Git objects to 32 MiB. Keep the full development repository and assets here in `demo/`; synchronize verified source and its matching build to `site-source/` while preserving that checkout's Git history, `SOURCE.md` provenance and Site identity. Run the Sites publishing workflow from `site-source/`, not from the original upstream history. The upstream GitHub repository is not pushed by this workflow.
