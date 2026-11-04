@@ -22,6 +22,14 @@ A separate 44-second live local OpenAI audition returned 632,031 bytes of native
 
 The exact local key was absent from tracked files, 210 reachable source/configuration Git blobs up to 2 MiB, and the built Worker/manifest. `.env.local` is ignored. The production configuration tool confirmed `OPENAI_API_KEY` as a secret with a redacted value. `scripts/check-key-safety.mjs` repeats local comparisons without logging the key.
 
+## Public voice and key checks
+
+The hosted voice deployment was verified on 2026-11-04. A real call produced 620,349 bytes of native audio from typed messages, passed all four camera/body assertions, requested no microphone permission, and reported no browser page errors. A second isolated visitor received `409 BUSY`. The close endpoint returned a successful response; a separate status request confirmed the call was closed and nine daily reservations remained. The real recording is `artifacts/grandma-public-audition.mp3`; the evidence and limitation are recorded in `artifacts/grandma-public-verification.json`.
+
+That first runner stalled after its game/audio assertions while awaiting Playwright's `Response.finished()` on the keepalive close request. It was stopped after confirming server closure independently. The harness now saves evidence before cleanup and bounds every cleanup wait; `node scripts/audition.mjs --check-cleanup` verifies the fix with mocks. No second paid call was used for that harness correction. This is not a claim that the first runner exited cleanly.
+
+Public probes for `.env.local`, `.git/config` and server source returned 404 with no-store caching. GET on the token route returned 405; a cross-origin token POST returned 403. The post-commit key scan covered 90 tracked files, 249 reachable source/configuration blobs up to 2 MiB, and the built Worker/manifest, without printing the key.
+
 ## Repeatable checks
 
 ```sh

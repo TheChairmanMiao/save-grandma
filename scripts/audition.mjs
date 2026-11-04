@@ -3,6 +3,64 @@ import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
+function within(pending, milliseconds, message) {
+  let timer;
+  return Promise.race([
+    pending,
+    new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function confirmCallClosure(response, bodyTimeout = 5000) {
+  assert.ok(response.ok(), 'The server did not accept the Realtime call-close request.');
+  // Keepalive responses can leave Playwright response.finished() pending indefinitely.
+  const receipt = await within(response.json(), bodyTimeout, 'The call-close receipt could not be read before the cleanup deadline.');
+  assert.ok(receipt?.closed === true, 'The server did not confirm that the Realtime call is closed.');
+  return { attempted: true, serverConfirmed: true, status: response.status() };
+}
+
+async function saveAuditionReport(filename, evidence, closeCall, write = writeFile) {
+  const draft = { ...evidence, complete: false, cleanup: { attempted: true, pending: true, serverConfirmed: false } };
+  await write(filename, JSON.stringify(draft, null, 2));
+  const cleanup = await closeCall();
+  const complete = { ...evidence, complete: true, cleanup };
+  await write(filename, JSON.stringify(complete, null, 2));
+  return complete;
+}
+
+async function checkCleanup() {
+  let finishedCalled = false;
+  const response = { ok: () => true, status: () => 200, json: async () => ({ closed: true }), finished: () => { finishedCalled = true; return new Promise(() => {}); } };
+  assert.equal((await within(confirmCallClosure(response), 100, 'Mock cleanup hung.')).serverConfirmed, true);
+  assert.equal(finishedCalled, false);
+  assert.equal((await confirmCallClosure({ ok: () => true, status: () => 200, json: async () => ({ closed: true }) })).status, 200);
+  await assert.rejects(confirmCallClosure({ ok: () => true, status: () => 200, json: () => new Promise(() => {}) }, 15), /cleanup deadline/);
+  await assert.rejects(confirmCallClosure({ ok: () => true, status: () => 202, json: async () => ({ closed: false, pending: true }) }), /did not confirm/);
+  await assert.rejects(within(new Promise(() => {}), 15, 'Total cleanup deadline.'), /Total cleanup deadline/);
+  const writes = [];
+  const write = async (_filename, text) => { writes.push(JSON.parse(text)); };
+  const report = await saveAuditionReport('mock.json', { nativeAudioBytes: 123, stateEvidence: [{ cameraMode: 'rear' }] }, async () => {
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].complete, false);
+    assert.equal(writes[0].nativeAudioBytes, 123);
+    return { serverConfirmed: true };
+  }, write);
+  assert.equal(report.complete, true);
+  assert.equal(writes[1].cleanup.serverConfirmed, true);
+  const failureWrites = [];
+  await assert.rejects(saveAuditionReport('mock.json', { nativeAudioBytes: 456 }, async () => { throw new Error('Mock close failure.'); }, async (_filename, text) => { failureWrites.push(JSON.parse(text)); }), /Mock close failure/);
+  assert.equal(failureWrites.length, 1);
+  assert.equal(failureWrites[0].nativeAudioBytes, 456);
+  assert.equal(failureWrites[0].complete, false);
+  console.log('Cleanup mock checks passed: stalled/absent finished(), bounded receipts and cleanup, confirmed closure, and preserved drafts. No browser or provider calls made.');
+}
+
+if (process.argv.length > 2) {
+  if (process.argv.length !== 3 || process.argv[2] !== '--check-cleanup') throw new Error('The only supported argument is --check-cleanup.');
+  await checkCleanup();
+  process.exit(0);
+}
+
 if (process.env.LIVE_AUDITION !== '1') throw new Error('Set LIVE_AUDITION=1 to run the paid, bounded voice audition.');
 const publicAudition = process.env.PUBLIC_AUDITION === '1';
 const canonicalPublicUrl = 'https://save-grandma-demo.resoluteflame.chatgpt.site';
@@ -33,7 +91,7 @@ page.on('response', response => {
 // Pausing hushes output but deliberately keeps the call alive. Pagehide owns actual teardown.
 function endCall() {
   if (closing) return closing;
-  closing = (async () => {
+  closing = within((async () => {
     if (!startedCall || page.isClosed()) return { attempted: false };
     const help = page.getByRole('button', { name: 'How to play' });
     if (await help.isVisible().catch(() => false)) await help.click();
@@ -45,16 +103,18 @@ function endCall() {
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
     if (pendingClose) {
       const response = await pendingClose;
-      assert.ok(response.ok(), 'The server did not confirm successful Realtime call closure.');
-      assert.equal(await response.finished(), null, 'The call-close response did not finish.');
-      return { attempted: true, serverConfirmed: true, status: response.status() };
+      return confirmCallClosure(response);
     }
     await page.waitForFunction(() => !window.__grandmaAudio?.srcObject, undefined, { timeout: 5000 });
     return { attempted: true, clientClosed: true, serverConfirmed: false };
-  })();
+  })(), 12_000, 'Realtime call cleanup exceeded its twelve-second deadline.');
   return closing;
 }
-const timeout = setTimeout(() => { void endCall().catch(() => {}).finally(() => browser.close()); }, 90_000);
+const timeout = setTimeout(() => {
+  // This independent bound still closes the browser if the shared cleanup promise stalls.
+  void within(endCall(), 12_000, 'Audition shutdown deadline.').catch(() => {})
+    .finally(() => within(browser.close(), 5000, 'Browser shutdown deadline.').catch(() => {}));
+}, 90_000);
 const started = Date.now();
 try {
   await page.addInitScript(() => {
@@ -154,9 +214,8 @@ try {
   const actions = publicAudition ? undefined : await page.evaluate(() => window.__auditionActions);
   await writeFile(`${artifact}.webm`, Buffer.from(recording));
   await page.screenshot({ path: `${artifact}.png`, animations: 'disabled' });
-  const cleanup = await endCall();
-  const report = { url, publicAudition, durationSeconds: Math.round((Date.now() - started) / 1000), microphoneRequests: 0, nativeAudioBytes: recording.length, transcript, actions, stateEvidence, busyCheck, cleanup, errors };
-  await writeFile(`${artifact}.json`, JSON.stringify(report, null, 2));
+  const evidence = { url, publicAudition, durationSeconds: Math.round((Date.now() - started) / 1000), microphoneRequests: 0, nativeAudioBytes: recording.length, transcript, actions, stateEvidence, busyCheck, errors };
+  const report = await saveAuditionReport(`${artifact}.json`, evidence, endCall);
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   await page.screenshot({ path: `${artifact}-failure.png` }).catch(() => {});
@@ -166,5 +225,5 @@ try {
 } finally {
   clearTimeout(timeout);
   try { await endCall(); } catch { console.error('Realtime call closure was not confirmed; inspect server call state before another audition.'); }
-  await browser.close();
+  await within(browser.close(), 5000, 'Browser shutdown deadline.');
 }
