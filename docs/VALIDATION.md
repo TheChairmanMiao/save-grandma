@@ -50,6 +50,12 @@ New tests compare phone perception against Three.js perspective projection, veri
 
 A final normal-motion Chrome review of the complete source captured 216 render/state frames, including 153 travel frames. Body facing matched travel; the camera moved between simulation ticks without screen transforms, observed path overshoot or room-wall clipping. Shelf-camera position and direction stayed fixed while Grandma walked away, and mobile camera aspect matched the canvas. The turn/midwalk/arrival/shelf/mobile screenshots were inspected. The one bootstrap request was intercepted before reaching the server, and no provider calls or browser page errors occurred. Evidence is in `artifacts/interaction/motion-report.json` and `motion-*.png`.
 
+## Portrait desktop phone frame
+
+The hosted production build passed Chrome layout checks at 1440×900, 1366×650, 1024×600, 390×844 and 480×800. Title, incoming call, gameplay and help shared the same inner screen. Desktop retained a logical 390×693⅓ layout scaled as a unit; portrait mobile sizes filled the browser. The matrix verified visible, hittable controls, the hosted mic/error row, no document overflow, and a preserved instruction draft when resizing through desktop portrait, short landscape and mobile. Screenshots were reviewed for the frame, title, help and composer. Evidence is in ignored `artifacts/layout/report.json` and its PNGs.
+
+The first corrected resize run exposed an intrinsic grid-track height that pushed the device down in a short window. Explicit zero-minimum grid tracks fixed the centering; the final matrix passed. AI bootstrap was intercepted in every case, no provider/SDP requests occurred, no browser page errors occurred, and the local quota remained unused. TypeScript, all 208 existing tests, the hosted build and key-exclusion scan passed. This is desktop Chrome viewport verification; actual mobile keyboards and Safari remain separate checks.
+
 ## Repeatable checks
 
 ```sh
@@ -68,6 +74,12 @@ With `npm run preview:offline` running after an offline build:
 
 ```sh
 SMOKE_URL=http://127.0.0.1:4173 SMOKE_PRODUCTION=1 npm run smoke
+```
+
+The portrait layout matrix can also run against the hosted Worker preview; it blocks paid connection paths:
+
+```sh
+LAYOUT_URL=http://127.0.0.1:4173 LAYOUT_MODE=hosted node scripts/layout-check.mjs
 ```
 
 The smoke script requires the selected browser to be installed. It drives title/start/answer, typed camera switches, the wrench solution, restart, clarification, help/pause and the hidden-intro transition. It also checks the portrait frame, narrow-viewport overflow and the absence of paid endpoint calls. A successful local production-preview result is recorded above; public-host verification remains a publishing checkpoint.

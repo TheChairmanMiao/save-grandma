@@ -3,6 +3,7 @@ import { gameCommands, gameController, simulation } from './game/session';
 import type { Action } from './game/types';
 import Scene from './view/Scene';
 import StartScreen from './view/StartScreen';
+import PhoneFrame from './view/PhoneFrame';
 import Intro, { GREETING, RULES } from './view/Intro';
 import Outro, { OUTRO_LINES } from './view/Outro';
 import { speak, stopSpeaking } from './voice/grandma-voice';
@@ -187,11 +188,11 @@ export default function App() {
     setHelpOpen(false); gameController.resume();
   };
 
-  return <>
-    {/* Connect inside the click so the mic prompt and audio unlock happen in the user gesture. */}
-    {!started && <StartScreen voiceAvailable={VOICE_AVAILABLE} onStart={() => { setStarted(true); setIntro('playing'); if (VOICE_AVAILABLE) void voice.connect({ microphone: false }); }} />}
-    <div className="stage" inert={!started}>
+  return <PhoneFrame>
       <div ref={phoneElement} className={`phone ${mayday ? 'mayday' : ''}`} data-testid="phone" data-camera-mode={world.phone.mode} data-grandma-facing={world.grandma.yaw} data-voice-speaking={voice.speaking} data-voice-responding={voice.responding}>
+        {/* Keep the title in the same viewport; only the call behind it is inert. */}
+        {!started && <StartScreen voiceAvailable={VOICE_AVAILABLE} onStart={() => { setStarted(true); setIntro('playing'); if (VOICE_AVAILABLE) void voice.connect({ microphone: false }); }} />}
+        <div className="call-content" inert={!started}>
         <div className="camera-view" data-testid="camera-view"><Scene world={world} /></div>
 
         <div className="call-time"><span className={`dot ${running ? 'live' : ''}`} />{elapsed}</div>
@@ -220,7 +221,7 @@ export default function App() {
             <button type="submit" className="primary composer-send" disabled={!callLive || !draft.trim()} aria-label="Send instruction">Send ↗</button>
           </form>
         </div>
+        </div>
       </div>
-    </div>
-  </>;
+  </PhoneFrame>;
 }

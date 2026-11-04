@@ -8,6 +8,8 @@ The browser demo accepts typed instructions without microphone access. When AI i
 
 The current game's visuals and UI are the design reference, as confirmed by Jeffrey for this demo. Images retain Jeff Miao's contribution records in `public/images/LICENSE.txt` and `downloads/LICENSE.txt`.
 
+At Jeffrey's request, laptops retain a fixed 390×693⅓ portrait game layout inside a phone bezel. The whole device scales uniformly with 24px of surrounding space; the title, incoming call, gameplay and overlays use the same screen. The interface does not spread into a landscape layout. Portrait phones up to 520px wide fill the browser without the decorative frame. `src/view/PhoneFrame.tsx` handles fitting; the actual inner viewport still supplies the 3D camera aspect.
+
 Title music, water and alarm are procedural sounds in `src/view/demo-audio.ts`. At Jeffrey's request, the incoming-call screen again uses the existing `public/audio/iphone-ringtone.mp3`; it loops while ringing, pauses when hidden and stops immediately on Answer. Its recorded source information is in `public/audio/LICENSE.txt`. Other supplied recordings and the large unrigged GLBs remain outside the deployed build.
 
 The held camera and body share a physical pose. Destination walks turn before moving, ease into motion and drive footsteps from distance traveled. Phone sway is small and removed for reduced-motion users; shelf placement stays fixed in world space. Grandma's actual eye view is distinct from the phone's selected lens and follows the same bounded head pose used by the character. Viewport aspect, pitch and large furniture affect visibility. This is approximate game-object perception, not general computer vision or full rendered-mesh occlusion.

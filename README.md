@@ -15,7 +15,7 @@ npm run dev
 
 Voice: copy `.env.example` to `.env.local` and set your own `OPENAI_API_KEY`, then restart the dev server. Starting the call connects Grandma (`gpt-realtime-2.1-mini` over WebRTC via the OpenAI Agents SDK). Typed messages go to the same agent and receive native spoken replies, without requesting microphone access. Tap the mic to talk instead; typing remains available. The key stays in the local Vite server, which mints short-lived client secrets at `POST /api/realtime-token`. No ElevenLabs key is needed. Voice code lives in `src/voice/`.
 
-Open the printed localhost URL. The game is a portrait phone screen, as if you were video-calling Grandma. Press Start and answer her incoming call. You can type or interrupt at any point during the call; there is no speaking countdown. The speaker button mutes Grandma's replies independently of the mic.
+Open the printed localhost URL. On laptops, the title, incoming call and game share a fixed portrait layout inside a phone frame. The complete device scales to fit the window instead of rearranging the interface. On portrait phones it fills the screen. Press Start and answer her incoming call. You can type or interrupt at any point during the call; there is no speaking countdown. The speaker button mutes Grandma's replies independently of the mic.
 
 When natural voice is unavailable, the interface explicitly shows “Offline dialogue · basic browser voice.” This scripted fallback uses `OfflineGrandma`, the parser in `src/voice/text-commands.ts` and the `gameCommands` bridge. It remembers corrections within a run, tries plausible visible targets for vague instructions, and reacts to actual action results. It is more limited than the live AI, and browser speech varies by device. Type `help` for example phrases.
 
@@ -28,6 +28,7 @@ The call opens on the front camera. “Turn off selfie mode” selects the rear 
 - `npm run build:offline` — static, credential-free fallback build for offline QA.
 - `npm run preview` — serve the hosted Worker build locally, with a separate local database.
 - `npm run smoke` — offline Chrome browser scenarios (wrench solution, replay, camera and body distinction, correction, varied dialogue, clarification, help/pause and portrait frame). Run with no key, or use the production preview command below.
+- `LAYOUT_URL=http://127.0.0.1:4173 node scripts/layout-check.mjs` — laptop/mobile title, incoming call and control geometry checks; AI connections are intercepted before reaching the server.
 - `BROWSER_CHANNEL=msedge npm run smoke` — the same tests in installed desktop Edge.
 - `npm run preview:offline` after `npm run build:offline`, then `SMOKE_URL=http://127.0.0.1:4173 SMOKE_PRODUCTION=1 npm run smoke` — the same scenarios against the offline build.
 - `LIVE_AUDITION=1 node scripts/audition.mjs` — opt-in paid local Realtime audition. Records native audio from typed input, checks camera/body actions and closes after at most 90 seconds. Requires the configured dev server; never points at a public host.
