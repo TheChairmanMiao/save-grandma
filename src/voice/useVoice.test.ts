@@ -201,7 +201,7 @@ describe('voice connection lifecycle without network or microphone access', () =
           transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' },
           turnDetection: expect.objectContaining({ createResponse: true, interruptResponse: true }),
         }),
-        output: expect.objectContaining({ voice: 'marin' }),
+        output: expect.objectContaining({ voice: 'coral' }),
       }),
     }));
     expect(await voice.setMicrophoneEnabled(false)).toBe(false);
