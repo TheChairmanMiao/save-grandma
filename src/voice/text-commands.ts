@@ -2,18 +2,17 @@ import type { Action, Direction, ItemId, ObjectId } from '../game/types';
 import type { CommandStep } from '../game/command-session';
 
 /**
- * PLACEHOLDER for Yao's voice agent.
- *
  * Turns a typed line such as "grab the wrench, go to the pipe, bend down, tighten the pipe"
- * into the same structured steps the voice adapter will produce. It is a small keyword matcher,
- * not a language model, so it only understands the phrasings listed in `EXAMPLES`.
- * The game itself never parses language; this module exists so the loop is playable before
- * speech, interpretation and Fish Audio are connected.
+ * into structured game actions. This deterministic typed fallback recognizes common phrases;
+ * the game controller itself never parses language. `EXAMPLES` supplies starting points.
  */
 export type ParseOutcome = { ok: true; steps: CommandStep[] } | { ok: false; phrase: string; hint: string };
+type CameraMode = Extract<Action, { type: 'switch_camera' }>['mode'];
+export type ParseContext = { cameraMode?: CameraMode };
 
 export const EXAMPLES = [
   'switch to the rear camera',
+  'turn the camera around',
   'go to the toolboxes',
   'open the red toolbox',
   'pick up the wrench',
@@ -51,15 +50,49 @@ const number = (text: string, fallback: number) => { const m = text.match(/(\d+(
 const direction = (text: string): Direction | undefined =>
   /\b(forward|forwards|ahead|straight)\b/.test(text) ? 'forward' : /\b(back|backward|backwards)\b/.test(text) ? 'backward' : /\bleft\b/.test(text) ? 'left' : /\bright\b/.test(text) ? 'right' : undefined;
 const target = (id: ObjectId) => ({ id });
+const oppositeCamera = (mode: CameraMode): CameraMode => mode === 'selfie' ? 'rear' : 'selfie';
+const negations = (text: string) => text.match(/\b(?:dont|do not|not|never|no|stop|disable|hide|cancel|turn off|switch off|shut off|away from)\b/g)?.length ?? 0;
+
+/** Resolve lens requests before movement. Negating a named view selects the other lens. */
+function cameraMode(text: string, current: CameraMode): CameraMode | undefined {
+  const mentions = text.matchAll(/\b(?:selfie(?: camera| cam| mode| view)?|(?:front|rear|back)(?: facing)?(?: camera| cam| view| mode)|(?:camera|cam)(?: mode)?(?: to)?(?: the)? (?:front|rear|back)|your face|yourself)\b/g);
+  let selected: CameraMode | undefined;
+  let previousEnd = 0;
+  for (const mention of mentions) {
+    const start = mention.index;
+    const end = start + mention[0].length;
+    const named: CameraMode = /\b(selfie|front|face|yourself)\b/.test(mention[0]) ? 'selfie' : 'rear';
+    // Scope a negation to its named view, so “not selfie, use rear” cannot invert the rear request.
+    const negatives = negations(text.slice(previousEnd, start))
+      + (/^\s+(?:(?:camera|cam|mode|view)\s+)?(?:off|disabled)\b/.test(text.slice(end)) ? 1 : 0);
+    selected = negatives % 2 ? oppositeCamera(named) : named;
+    previousEnd = end;
+  }
+  if (selected) return selected;
+
+  if (/\b(show|see|view|look at)\b/.test(text)) {
+    const room = /\b(room|bathroom|pipe|leak)\b/.exec(text);
+    if (room) return negations(text.slice(0, room.index)) % 2 ? 'selfie' : 'rear';
+  }
+
+  const lensSubject = /\b(camera|cam|phone)\b/.test(text);
+  const toggle = lensSubject && (/\b(flip|switch|swap|toggle)\b/.test(text)
+    || /\b(other|opposite)\b/.test(text)
+    || /\b(turn|spin|rotate)\b.*\b(camera|cam|phone)\b.*\baround\b/.test(text));
+  if ((toggle || /\bflip\b.*\baround\b/.test(text)) && !negations(text)) return oppositeCamera(current);
+  return undefined;
+}
 
 /** Parses one clause. Returns undefined when nothing matched. */
-function parseClause(raw: string): Action | undefined {
-  const text = raw.toLowerCase().replace(/[^a-z0-9. ]/g, ' ').replace(/\s+/g, ' ').trim();
+function parseClause(raw: string, currentCamera: CameraMode): Action | undefined {
+  const text = raw.toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9. ]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!text) return undefined;
   const object = findObject(text);
 
-  if (/\b(rear|back) camera\b/.test(text) || /\bflip\b.*\b(room|around)\b/.test(text) || /\bshow me the (room|bathroom|pipe|leak)\b/.test(text)) return { type: 'switch_camera', mode: 'rear' };
-  if (/\b(front|selfie) camera\b|\bselfie\b|\bshow me (your face|yourself)\b/.test(text)) return { type: 'switch_camera', mode: 'selfie' };
+  const requestedCamera = cameraMode(text, currentCamera);
+  if (requestedCamera) return { type: 'switch_camera', mode: requestedCamera };
+  // An unsupported/negated camera instruction must not fall through to turning Grandma's body.
+  if (/\b(camera|cam|selfie)\b/.test(text)) return undefined;
 
   if (/\bphone\b/.test(text)) {
     if (/\b(pick|grab|take|get|retrieve)\b/.test(text)) return { type: 'retrieve_phone' };
@@ -117,17 +150,19 @@ function parseClause(raw: string): Action | undefined {
   return undefined;
 }
 
-/** Splits a typed line into clauses on commas, "then", "and", semicolons and periods. */
-export function parseInstruction(line: string): ParseOutcome {
+/** Splits clauses and tracks lens changes. Omitted context assumes the initial selfie lens. */
+export function parseInstruction(line: string, context: ParseContext = {}): ParseOutcome {
   const clauses = line.split(/\s*(?:,|;|\.|\bthen\b|\band then\b|\bafter that\b|\band\b)\s*/i).map(c => c.trim()).filter(Boolean);
   if (!clauses.length) return { ok: false, phrase: line, hint: 'Type an instruction for Grandma, or "help" for examples.' };
   const steps: CommandStep[] = [];
+  let currentCamera = context.cameraMode ?? 'selfie';
   for (const clause of clauses) {
-    const action = parseClause(clause);
+    const action = parseClause(clause, currentCamera);
     if (!action) return { ok: false, phrase: clause, hint: `I don’t know how to do “${clause}”. Try something like “${EXAMPLES[Math.floor(Math.random() * EXAMPLES.length)]}”.` };
     // Turning the pipe implies walking over and bending down; the game still checks every prerequisite.
     if (action.type === 'rotate' && !steps.some(s => s.action.type === 'move_to' || s.action.type === 'bend')) steps.push({ action: { type: 'move_to', target: action.target } }, { action: { type: 'bend' } });
     steps.push({ action });
+    if (action.type === 'switch_camera') currentCamera = action.mode;
   }
   return { ok: true, steps };
 }

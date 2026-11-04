@@ -162,6 +162,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 .turn-bar { grid-column: 1 / -1; height: 5px; background: #ffffff22; border-radius: 3px; overflow: hidden; }
 .turn-bar i { display: block; height: 100%; background: linear-gradient(90deg, #ffd23f, #ff9f43); transition: width .1s linear; }
 .mic-row { display: flex; justify-content: center; align-items: center; gap: 12px; }
+.voice-toggle { border: 1px solid #ffffff2a; border-radius: 22px; background: #ffffff1a; color: var(--ink); font-size: 12px; padding: 8px 12px; }
+.voice-toggle:hover:not(:disabled) { background: #ffffff30; }
 .mic.listening { border-color: #ffd23f; background: #ffd23f33; color: #ffd23f; box-shadow: 0 0 0 6px #ffd23f22; animation: listen-pulse 1.4s ease-in-out infinite; }
 .mic.muted.connected { opacity: .8; }
 .mic:not(:disabled):hover { background: #ffffff30; }

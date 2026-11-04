@@ -12,13 +12,17 @@ function realtimeToken(apiKey: string | undefined): Plugin {
       const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session: { type: 'realtime', model: REALTIME_MODEL } }),
+        body: JSON.stringify({ session: {
+          type: 'realtime', model: REALTIME_MODEL,
+          // Remain silent before the SDK applies the character and the player answers.
+          audio: { input: { turn_detection: { type: 'semantic_vad', create_response: false, interrupt_response: false } } },
+        } }),
       });
       const data = await response.json() as { value?: string; error?: { message?: string } };
-      if (!response.ok || !data.value) { res.statusCode = 502; res.end(JSON.stringify({ error: data.error?.message ?? 'Could not create a Realtime client secret.' })); return; }
+      if (!response.ok || !data.value) { res.statusCode = 502; res.end(JSON.stringify({ error: 'Could not create a Realtime client secret. Check the server credentials and account access.' })); return; }
       res.end(JSON.stringify({ value: data.value }));
-    } catch (error) {
-      res.statusCode = 502; res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+    } catch {
+      res.statusCode = 502; res.end(JSON.stringify({ error: 'The voice service could not be reached.' }));
     }
   };
   return { name: 'realtime-token', configureServer: server => { server.middlewares.use(handler); }, configurePreviewServer: server => { server.middlewares.use(handler); } };
@@ -26,8 +30,8 @@ function realtimeToken(apiKey: string | undefined): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  // Public builds are static and must never advertise development-only voice endpoints.
-  const voiceAvailable = mode === 'development' && !!env.OPENAI_API_KEY;
+  // Hosted builds use a same-origin, quota-controlled SDP relay; offline builds make no paid calls.
+  const voiceAvailable = mode === 'hosted' || (mode === 'development' && !!env.OPENAI_API_KEY);
   return {
     // Only assets imported by the game ship; retain the original recordings/models as source references.
     publicDir: false,

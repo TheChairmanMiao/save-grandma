@@ -7,7 +7,7 @@ export default function StartScreen({ onStart, voiceAvailable }: { onStart: () =
     <div className="start-card">
       <h1 id="start-title" className="start-title"><img src={titleImage} alt="Save Grandma" width={1536} height={1024} /></h1>
       <button className="start-button" aria-label="Start the game" autoFocus onClick={onStart}>Start</button>
-      <p className="demo-caption">One call. Five minutes. Save Grandma.<br /><span>{voiceAvailable ? 'Speak or type your instructions.' : 'Type your instructions. No microphone needed.'}</span></p>
+      <p className="demo-caption">One call. Five minutes. Save Grandma.<br /><span>{voiceAvailable ? 'Type or talk. Grandma speaks back.' : 'Offline dialogue · type instructions · basic voice.'}</span></p>
     </div>
   </div>;
 }

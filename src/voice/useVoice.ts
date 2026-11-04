@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { RealtimeItem, RealtimeSession } from '@openai/agents/realtime';
+import type { OpenAIRealtimeWebRTC, RealtimeItem, RealtimeSession } from '@openai/agents/realtime';
 import { GRANDMA_SPEED, GRANDMA_VOICE, REALTIME_MODEL } from './model';
 import { GRANDMA_GREETING, GRANDMA_VOICE_STYLE } from './persona';
 import { onSpeaking, stopSpeaking } from './grandma-voice';
 
 export type VoiceStatus = 'idle' | 'microphone' | 'connecting' | 'connected' | 'error';
+export type VoiceMessage = { id: string; text: string };
 
 const CONNECT_TIMEOUT_MS = 20_000;
 const TOKEN_TIMEOUT_MS = 8_000;
 // Closes ordinary abandoned calls. This client timer is not an enforceable spending cap.
 const MAX_SESSION_MS = 6 * 60_000;
+
+const audioSettings = (automaticInput: boolean) => ({
+  input: {
+    transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' },
+    turnDetection: { type: 'semantic_vad' as const, eagerness: 'high' as const, createResponse: automaticInput, interruptResponse: automaticInput },
+  },
+  output: { voice: GRANDMA_VOICE, speed: GRANDMA_SPEED },
+});
 
 function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -22,43 +31,81 @@ function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
 
 async function fetchClientSecret(signal: AbortSignal) {
   const response = await fetch('/api/realtime-token', { method: 'POST', signal });
-  const data = await response.json().catch(() => ({})) as { value?: unknown };
+  const data = await response.json().catch(() => ({})) as { value?: unknown; relay?: boolean; code?: string };
   if (!response.ok || typeof data.value !== 'string' || !data.value) {
-    throw new Error('Voice is unavailable for this demo. You can keep playing by typing.');
+    if (data.code === 'DAILY_LIMIT') throw new Error('Today’s 10 AI calls are used up. Grandma can still play offline. Try again tomorrow.');
+    if (data.code === 'BUSY') throw new Error('Grandma is on another AI call. Keep typing offline, or try connecting again in a few minutes.');
+    throw new Error('Grandma’s AI is unavailable. Check the server connection and try again.');
   }
-  return data.value;
+  return { value: data.value, relay: data.relay === true };
 }
 
-function lastTranscript(history: RealtimeItem[], role: 'user' | 'assistant') {
+function lastMessage(history: RealtimeItem[], role: 'user' | 'assistant'): VoiceMessage | null {
   for (let i = history.length - 1; i >= 0; i--) {
     const item = history[i];
-    if (item.type !== 'message' || item.role !== role) continue;
-    if ('status' in item && item.status === 'in_progress') continue;
-    for (const part of item.content) {
-      const text = 'transcript' in part ? part.transcript : 'text' in part ? part.text : undefined;
-      if (text) return text;
-    }
+    if (item.type !== 'message' || item.role !== role || item.status === 'in_progress') continue;
+    const text = item.content.map(part => 'transcript' in part ? part.transcript : 'text' in part ? part.text : '').filter(Boolean).join('\n');
+    if (text) return { id: item.itemId, text };
   }
-  return '';
+  return null;
 }
+const stopStream = (stream: MediaStream | null) => stream?.getTracks().forEach(track => track.stop());
 
 type Attempt = {
   generation: number;
   abort: AbortController;
   audio: HTMLAudioElement;
-  stream: MediaStream | null;
+  microphoneStream: MediaStream | null;
+  silentStream: MediaStream | null;
+  context: AudioContext | null;
   session: RealtimeSession | null;
+  transport: OpenAIRealtimeWebRTC | null;
+  ready: boolean;
+  microphoneEnabled: boolean;
+  microphoneGeneration: number;
+  microphoneAbort: AbortController | null;
+  microphoneRequest: Promise<boolean> | null;
+  microphoneTarget: boolean;
+  awaitingResponse: boolean;
+  automaticInputEnabled: boolean | null;
   timer: ReturnType<typeof setTimeout> | null;
   tokenTimer: ReturnType<typeof setTimeout> | null;
+  relayAuth?: string;
 };
 
-/** One Realtime voice session with Grandma, connected to the shared game controller through tools. */
+function syncAudioInput(attempt: Attempt, appMuted: boolean) {
+  if (!attempt.ready || !attempt.transport || !attempt.session) return;
+  const enabled = attempt.microphoneEnabled && !appMuted;
+  // The installed transport fills omitted audio fields with defaults, so preserve the full audio configuration.
+  if (attempt.automaticInputEnabled !== enabled) {
+    attempt.transport.updateSessionConfig({ outputModalities: ['audio'], audio: audioSettings(enabled) });
+    attempt.automaticInputEnabled = enabled;
+  }
+  attempt.session.mute(!enabled);
+}
+
+/** A real, silent track satisfies the SDK without requesting microphone permission. */
+function silentStream(attempt: Attempt): MediaStream {
+  if (attempt.silentStream) return attempt.silentStream;
+  if (typeof AudioContext === 'undefined') throw new Error('This browser cannot start an audio call. Try a current desktop browser.');
+  const context = new AudioContext();
+  attempt.context = context;
+  const stream = context.createMediaStreamDestination().stream;
+  attempt.silentStream = stream;
+  const track = stream.getAudioTracks()[0];
+  if (!track) throw new Error('This browser could not create the call’s audio track.');
+  track.enabled = false;
+  // This function is called synchronously from the Start/mic click, before network awaits.
+  void context.resume().catch(() => {});
+  return stream;
+}
+
+/** One conversation shared by typed messages and optional microphone input. */
 export function useVoice() {
   const active = useRef<Attempt | null>(null);
   const generation = useRef(0);
   const connecting = useRef<Promise<void> | null>(null);
   const mounted = useRef(true);
-  const responding = useRef(false);
   const mutedValue = useRef(false);
   const holdOutputMuted = useRef(false);
   const [status, setStatus] = useState<VoiceStatus>('idle');
@@ -69,6 +116,10 @@ export function useVoice() {
   const [speechEnded, setSpeechEnded] = useState(0);
   const [speechStarted, setSpeechStarted] = useState(0);
   const [muted, setMuted] = useState(false);
+  const [responding, setResponding] = useState(false);
+  const [microphoneEnabled, setMicrophoneEnabledState] = useState(false);
+  const [assistantMessage, setAssistantMessage] = useState<VoiceMessage | null>(null);
+  const [userMessage, setUserMessage] = useState<VoiceMessage | null>(null);
 
   const isCurrent = (attempt: Attempt) => mounted.current && active.current === attempt && generation.current === attempt.generation;
   const clearConnection = useCallback(() => {
@@ -76,176 +127,282 @@ export function useVoice() {
     active.current = null;
     generation.current++;
     connecting.current = null;
-    responding.current = false;
     holdOutputMuted.current = false;
     stopSpeaking();
+    if (mounted.current) { setResponding(false); setMicrophoneEnabledState(false); }
     if (!attempt) return;
+    attempt.ready = false;
     attempt.abort.abort();
+    attempt.microphoneAbort?.abort();
     if (attempt.timer) clearTimeout(attempt.timer);
     if (attempt.tokenTimer) clearTimeout(attempt.tokenTimer);
-    // Invalidate callbacks before closing; the SDK emits connection_change while closing.
-    try { attempt.session?.close(); } catch { /* Continue releasing caller-owned resources. */ }
-    attempt.stream?.getTracks().forEach(track => track.stop());
-    attempt.audio.pause();
-    attempt.audio.srcObject = null;
-    attempt.audio.src = '';
+    try { attempt.session?.close(); } catch { /* Still release caller-owned media resources. */ }
+    if (attempt.relayAuth) {
+      // This is a single-use application call token. The provider key never reaches the browser.
+      void fetch('/api/realtime-close', { method: 'POST', headers: { Authorization: `Bearer ${attempt.relayAuth}` }, keepalive: true }).catch(() => {});
+      attempt.relayAuth = undefined;
+    }
+    stopStream(attempt.microphoneStream); attempt.microphoneStream = null;
+    stopStream(attempt.silentStream); attempt.silentStream = null;
+    if (attempt.context) { void attempt.context.close().catch(() => {}); attempt.context = null; }
+    attempt.audio.pause(); attempt.audio.srcObject = null; attempt.audio.src = '';
   }, []);
 
+  const failConnection = useCallback((attempt: Attempt, message: string) => {
+    if (!isCurrent(attempt)) return;
+    clearConnection();
+    setStatus('error'); setError(message); setSpeaking(false); setMuted(false);
+  }, [clearConnection]);
   const disconnect = useCallback(({ resetCaptions = true }: { resetCaptions?: boolean } = {}) => {
     clearConnection();
     if (!mounted.current) return;
     mutedValue.current = false;
     setStatus('idle'); setError(''); setSpeaking(false); setMuted(false);
-    if (resetCaptions) { setGrandmaSaid(''); setYouSaid(''); }
+    if (resetCaptions) { setGrandmaSaid(''); setYouSaid(''); setAssistantMessage(null); setUserMessage(null); }
   }, [clearConnection]);
 
-  const connect = useCallback((): Promise<void> => {
+  const setMicrophoneEnabled = useCallback((enabled: boolean): Promise<boolean> => {
+    const attempt = active.current;
+    if (!attempt?.ready || !attempt.session) return Promise.resolve(false);
+    if (attempt.microphoneRequest && attempt.microphoneTarget === enabled) return attempt.microphoneRequest;
+    if (!attempt.microphoneRequest && attempt.microphoneEnabled === enabled) return Promise.resolve(enabled);
+    attempt.microphoneAbort?.abort();
+    const abort = new AbortController();
+    attempt.microphoneAbort = abort;
+    attempt.microphoneTarget = enabled;
+    const microphoneGeneration = ++attempt.microphoneGeneration;
+    const current = () => isCurrent(attempt) && attempt.ready && attempt.microphoneGeneration === microphoneGeneration && !abort.signal.aborted;
+    setError('');
+    let requested: Promise<MediaStream>;
+    try {
+      if (enabled) {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone access needs HTTPS or localhost.');
+        // Called immediately from the explicit mic-button click, never from typed input.
+        requested = navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+          if (!current()) stopStream(stream);
+          return stream;
+        });
+      } else {
+        attempt.microphoneEnabled = false;
+        syncAudioInput(attempt, mutedValue.current);
+        setMicrophoneEnabledState(false); setMuted(true);
+        requested = Promise.resolve(silentStream(attempt));
+      }
+    } catch {
+      setError('The microphone could not be enabled. You can still chat by typing.');
+      return Promise.resolve(false);
+    }
+    const pending = (async () => {
+      let stream: MediaStream | null = null;
+      try {
+        stream = await abortable(requested, abort.signal);
+        if (!current()) { if (enabled) stopStream(stream); return false; }
+        if (enabled) attempt.microphoneStream = stream;
+        const track = stream.getAudioTracks()[0];
+        const sender = attempt.transport?.connectionState.peerConnection?.getSenders().find(candidate => candidate.track?.kind === 'audio');
+        if (!track || !sender) throw new Error('Call audio sender is unavailable.');
+        await abortable(sender.replaceTrack(track), abort.signal);
+        if (!current()) { if (enabled) stopStream(stream); return false; }
+        if (!enabled) { stopStream(attempt.microphoneStream); attempt.microphoneStream = null; }
+        attempt.microphoneEnabled = enabled;
+        syncAudioInput(attempt, mutedValue.current);
+        setMicrophoneEnabledState(enabled); setMuted(mutedValue.current || !enabled);
+        return enabled;
+      } catch {
+        if (enabled && stream && attempt.microphoneStream === stream) { stopStream(stream); attempt.microphoneStream = null; }
+        if (current()) {
+          if (!enabled) { stopStream(attempt.microphoneStream); attempt.microphoneStream = null; }
+          setError(enabled ? 'Microphone access was blocked or interrupted. You can still chat by typing.' : 'The microphone is off. You can still chat by typing.');
+        }
+        return false;
+      }
+    })();
+    attempt.microphoneRequest = pending;
+    void pending.finally(() => {
+      if (attempt.microphoneRequest === pending) { attempt.microphoneRequest = null; attempt.microphoneAbort = null; }
+    });
+    return pending;
+  }, []);
+
+  const connect = useCallback(({ microphone = true }: { microphone?: boolean } = {}): Promise<void> => {
     if (connecting.current) return connecting.current;
-    if (active.current) return Promise.resolve();
-    setError(''); setGrandmaSaid(''); setYouSaid('');
-    setSpeechStarted(0); setSpeechEnded(0);
-    // Unlock output inside the click gesture, before token/network work. No microphone prompt yet.
+    if (active.current?.ready) return microphone ? setMicrophoneEnabled(true).then(() => {}) : Promise.resolve();
+    setError(''); setGrandmaSaid(''); setYouSaid(''); setAssistantMessage(null); setUserMessage(null);
+    setSpeechStarted(0); setSpeechEnded(0); setResponding(false);
     const audio = document.createElement('audio');
-    audio.autoplay = true;
-    audio.muted = holdOutputMuted.current;
+    audio.autoplay = true; audio.muted = holdOutputMuted.current;
     void audio.play().catch(() => {});
     const attempt: Attempt = {
       generation: ++generation.current, abort: new AbortController(), audio,
-      stream: null, session: null, timer: null, tokenTimer: null,
+      microphoneStream: null, silentStream: null, context: null, session: null, transport: null, ready: false,
+      microphoneEnabled: false, microphoneGeneration: 0, microphoneAbort: null, microphoneRequest: null,
+      microphoneTarget: microphone, awaitingResponse: false, automaticInputEnabled: null, timer: null, tokenTimer: null,
     };
     active.current = attempt;
     setStatus('connecting');
-    const fail = (message: string) => {
-      if (!isCurrent(attempt)) return;
-      clearConnection();
-      setStatus('error'); setError(message); setSpeaking(false); setMuted(false);
-    };
-    attempt.timer = setTimeout(() => fail('Voice connection timed out. You can type or try the microphone again.'), CONNECT_TIMEOUT_MS);
+    // Create/unlock the silent audio graph in the click gesture. It never opens the microphone.
+    if (!microphone) {
+      try { silentStream(attempt); }
+      catch (cause) {
+        failConnection(attempt, cause instanceof Error ? cause.message : 'This browser could not start the audio call.');
+        return Promise.resolve();
+      }
+    }
+    attempt.timer = setTimeout(() => failConnection(attempt, 'Grandma’s AI connection timed out. Try connecting again.'), CONNECT_TIMEOUT_MS);
     attempt.tokenTimer = setTimeout(() => {
-      if (isCurrent(attempt)) fail('Voice is taking too long to connect. You can keep playing by typing.');
+      if (isCurrent(attempt)) failConnection(attempt, 'Grandma’s AI server is taking too long to connect. Try again.');
     }, TOKEN_TIMEOUT_MS);
 
     const pending = (async () => {
       try {
-        const secret = await abortable(fetchClientSecret(attempt.abort.signal), attempt.abort.signal);
+        const credentials = await abortable(fetchClientSecret(attempt.abort.signal), attempt.abort.signal);
+        if (credentials.relay) attempt.relayAuth = credentials.value;
         if (attempt.tokenTimer) { clearTimeout(attempt.tokenTimer); attempt.tokenTimer = null; }
         if (!isCurrent(attempt)) return;
-        // Avoid downloading the voice SDK/agent for a typed-only demo or unavailable backend.
         const [{ OpenAIRealtimeWebRTC, RealtimeSession }, { grandmaAgent }] = await abortable(
           Promise.all([import('@openai/agents/realtime'), import('./grandma')]), attempt.abort.signal,
         );
         if (!isCurrent(attempt)) return;
-        if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone access needs HTTPS or localhost. You can keep playing by typing.');
-        setStatus('microphone');
-        const requestedStream = navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-          // Permission prompts cannot be aborted. Dispose a late stream after cancellation/retry.
-          if (!isCurrent(attempt)) stream.getTracks().forEach(track => track.stop());
-          return stream;
-        });
         let stream: MediaStream;
-        try { stream = await abortable(requestedStream, attempt.abort.signal); }
-        catch (cause) {
-          if (!isCurrent(attempt)) return;
-          throw new Error('Microphone access was blocked. You can type, or allow the microphone and retry.', { cause });
-        }
-        if (!isCurrent(attempt)) { stream.getTracks().forEach(track => track.stop()); return; }
-        attempt.stream = stream;
+        if (microphone) {
+          if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone access needs HTTPS or localhost. You can connect using typed chat.');
+          setStatus('microphone');
+          const requestedStream = navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            if (!isCurrent(attempt)) stopStream(stream);
+            return stream;
+          });
+          try { stream = await abortable(requestedStream, attempt.abort.signal); }
+          catch (cause) {
+            if (!isCurrent(attempt)) return;
+            throw new Error('Microphone access was blocked. Connect using typed chat, or allow the microphone and retry.', { cause });
+          }
+          if (!isCurrent(attempt)) { stopStream(stream); return; }
+          attempt.microphoneStream = stream;
+          attempt.microphoneEnabled = true;
+        } else stream = silentStream(attempt);
         setStatus('connecting');
         const transport = new OpenAIRealtimeWebRTC({ audioElement: audio, mediaStream: stream });
+        attempt.transport = transport;
+        const automaticInput = attempt.microphoneEnabled && !mutedValue.current;
+        attempt.automaticInputEnabled = automaticInput;
         const s = new RealtimeSession(grandmaAgent, {
           transport, model: REALTIME_MODEL,
           config: {
             outputModalities: ['audio'],
-            audio: {
-              input: { transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' }, turnDetection: { type: 'semantic_vad', eagerness: 'high', createResponse: false, interruptResponse: false } },
-              output: { voice: GRANDMA_VOICE, speed: GRANDMA_SPEED },
-            },
+            audio: audioSettings(automaticInput),
           },
         });
         attempt.session = s;
         transport.on('connection_change', state => {
-          if (state === 'disconnected' && isCurrent(attempt)) fail('The voice call disconnected. You can type or reconnect the microphone.');
+          if (state === 'disconnected') failConnection(attempt, 'Grandma’s AI call disconnected. Try connecting again.');
         });
         s.on('history_updated', history => {
           if (!isCurrent(attempt)) return;
-          setGrandmaSaid(lastTranscript(history, 'assistant'));
-          setYouSaid(lastTranscript(history, 'user'));
+          const assistant = lastMessage(history, 'assistant'); const user = lastMessage(history, 'user');
+          setGrandmaSaid(assistant?.text ?? ''); setYouSaid(user?.text ?? '');
+          setAssistantMessage(old => old?.id === assistant?.id && old?.text === assistant?.text ? old : assistant);
+          setUserMessage(old => old?.id === user?.id && old?.text === user?.text ? old : user);
         });
         s.on('transport_event', event => {
           if (!isCurrent(attempt)) return;
-          if (event.type === 'input_audio_buffer.speech_started') setSpeechStarted(n => n + 1);
-          if (event.type === 'input_audio_buffer.committed') setSpeechEnded(n => n + 1);
-          if (event.type === 'response.created') responding.current = true;
-          if (event.type === 'response.done') responding.current = false;
+          const acceptsSpeech = attempt.microphoneEnabled && !mutedValue.current;
+          if (event.type === 'input_audio_buffer.speech_started' && acceptsSpeech) setSpeechStarted(n => n + 1);
+          if (event.type === 'input_audio_buffer.committed' && acceptsSpeech) { attempt.awaitingResponse = true; setResponding(true); setSpeechEnded(n => n + 1); }
+          if (event.type === 'response.created') { attempt.awaitingResponse = false; setResponding(true); }
+          if (event.type === 'response.done' && !attempt.awaitingResponse) setResponding(false);
         });
         s.on('audio_start', () => { if (isCurrent(attempt)) setSpeaking(true); });
         s.on('audio_stopped', () => { if (isCurrent(attempt)) setSpeaking(false); });
         s.on('audio_interrupted', () => { if (isCurrent(attempt)) setSpeaking(false); });
-        s.on('error', () => fail('Voice was interrupted. You can keep playing by typing or reconnect the microphone.'));
-        await abortable(s.connect({ apiKey: secret }), attempt.abort.signal);
+        s.on('error', () => failConnection(attempt, 'Grandma’s AI call was interrupted. Try connecting again.'));
+        await abortable(s.connect({ apiKey: credentials.value, ...(credentials.relay ? { url: new URL('/api/realtime-call', window.location.origin).href } : {}) }), attempt.abort.signal);
         if (!isCurrent(attempt)) { s.close(); return; }
         if (attempt.timer) clearTimeout(attempt.timer);
-        s.mute(mutedValue.current);
+        attempt.ready = true;
+        syncAudioInput(attempt, mutedValue.current);
+        setMicrophoneEnabledState(attempt.microphoneEnabled); setMuted(mutedValue.current || !attempt.microphoneEnabled);
         setStatus('connected');
-        attempt.timer = setTimeout(() => {
-          if (isCurrent(attempt)) disconnect({ resetCaptions: false });
-        }, MAX_SESSION_MS);
+        attempt.timer = setTimeout(() => { if (isCurrent(attempt)) disconnect({ resetCaptions: false }); }, MAX_SESSION_MS);
       } catch (cause) {
         if (!isCurrent(attempt)) return;
-        fail(cause instanceof Error && cause.message.startsWith('Microphone') ? cause.message : 'Voice is unavailable right now. You can keep playing by typing.');
+        failConnection(attempt, cause instanceof Error && /^(Microphone|Today’s|Grandma is on another)/.test(cause.message) ? cause.message : 'Grandma’s AI is unavailable. Check the server connection and try again.');
       }
     })();
     connecting.current = pending;
     void pending.finally(() => { if (connecting.current === pending) connecting.current = null; });
     return pending;
-  }, [clearConnection, disconnect]);
+  }, [disconnect, failConnection, setMicrophoneEnabled]);
 
   const setMute = useCallback((value: boolean) => {
     mutedValue.current = value;
-    active.current?.session?.mute(value);
-    setMuted(value);
-  }, []);
-  const greet = useCallback(() => {
-    active.current?.session?.transport.sendEvent({ type: 'response.create', response: {
-      instructions: `${GRANDMA_VOICE_STYLE}\nOpen the call by saying exactly: "${GRANDMA_GREETING}" Use affectionate exasperation and a little urgency. Do not call tools or add another line. Then stop and listen.`,
-    } });
-  }, []);
+    const attempt = active.current;
+    if (attempt) {
+      try { syncAudioInput(attempt, value); }
+      catch { failConnection(attempt, 'Grandma’s audio settings could not update. Try connecting again.'); }
+    }
+    setMuted(value || !attempt?.microphoneEnabled);
+  }, [failConnection]);
   const hush = useCallback(() => {
     const attempt = active.current;
-    stopSpeaking();
-    setSpeaking(false);
-    attempt?.session?.interrupt();
+    stopSpeaking(); setSpeaking(false); setResponding(false);
     if (attempt) {
-      attempt.audio.muted = true;
-      setTimeout(() => { if (isCurrent(attempt) && !holdOutputMuted.current) attempt.audio.muted = false; }, 600);
+      attempt.awaitingResponse = false;
+      attempt.session?.interrupt();
+      // Clear queued output through the SDK; do not hide the next response with a timed mute.
+      attempt.audio.muted = holdOutputMuted.current;
     }
+  }, []);
+  const sendText = useCallback((text: string): boolean => {
+    const attempt = active.current;
+    const trimmed = text.trim();
+    if (!trimmed || !attempt?.ready || !attempt.session) return false;
+    try {
+      hush();
+      attempt.awaitingResponse = true; setResponding(true);
+      // sendMessage creates the user item AND requests one response. Do not call respond() too.
+      attempt.session.sendMessage(trimmed);
+      return true;
+    } catch {
+      failConnection(attempt, 'Your message could not reach Grandma’s AI. Try connecting again.');
+      return false;
+    }
+  }, [failConnection, hush]);
+  const greet = useCallback(() => {
+    const attempt = active.current; if (!attempt?.ready || !attempt.session) return;
+    attempt.awaitingResponse = true; setResponding(true);
+    attempt.session.transport.sendEvent({ type: 'response.create', response: {
+      instructions: `${GRANDMA_VOICE_STYLE}\nOpen the call by saying exactly: "${GRANDMA_GREETING}" Use affectionate exasperation and a little urgency. Do not call tools or add another line. Then stop and listen.`,
+    } });
   }, []);
   const setOutputMuted = useCallback((value: boolean) => {
     holdOutputMuted.current = value;
     const attempt = active.current;
     if (attempt) attempt.audio.muted = value;
-    if (value && attempt?.session) {
-      stopSpeaking();
-      setSpeaking(false);
-    }
+    if (value && attempt?.session) { stopSpeaking(); setSpeaking(false); }
   }, []);
-  const notify = useCallback((text: string) => { active.current?.session?.sendMessage(text); }, []);
+  const notify = useCallback((text: string) => { sendText(text); }, [sendText]);
   const sayLine = useCallback((text: string) => {
-    const s = active.current?.session; if (!s) return;
-    stopSpeaking();
-    s.interrupt();
-    s.transport.sendEvent({ type: 'response.create', response: { instructions: `${GRANDMA_VOICE_STYLE}\nSay exactly this line: "${text}" Do not call tools or add commentary. Then stop speaking.` } });
-  }, []);
+    const attempt = active.current; if (!attempt?.ready || !attempt.session) return;
+    hush(); attempt.awaitingResponse = true; setResponding(true);
+    attempt.session.transport.sendEvent({ type: 'response.create', response: { instructions: `${GRANDMA_VOICE_STYLE}\nSay exactly this line: "${text}" Do not call tools or add commentary. Then stop speaking.` } });
+  }, [hush]);
 
   useEffect(() => onSpeaking(value => { if (mounted.current) setSpeaking(value); }), []);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; clearConnection(); };
-  }, [clearConnection]);
+    const leave = () => disconnect();
+    if (typeof window !== 'undefined') window.addEventListener('pagehide', leave);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('pagehide', leave);
+      mounted.current = false; clearConnection();
+    };
+  }, [clearConnection, disconnect]);
+  // Compatibility for callers that explicitly request a reply; microphone turns use automatic VAD.
   const respond = useCallback(() => {
-    if (responding.current) return;
-    active.current?.session?.transport.sendEvent({ type: 'response.create' });
+    const attempt = active.current; if (!attempt?.ready || !attempt.session) return;
+    attempt.awaitingResponse = true; setResponding(true);
+    attempt.session.transport.sendEvent({ type: 'response.create' });
   }, []);
 
-  return { status, error, grandmaSaid, youSaid, speaking, speechStarted, speechEnded, muted, connect, disconnect, setMute, setOutputMuted, notify, sayLine, greet, respond, hush };
+  return { status, error, grandmaSaid, youSaid, assistantMessage, userMessage, speaking, responding, microphoneEnabled, speechStarted, speechEnded, muted, connect, disconnect, setMicrophoneEnabled, sendText, setMute, setOutputMuted, notify, sayLine, greet, respond, hush };
 }

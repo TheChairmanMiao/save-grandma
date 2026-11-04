@@ -82,9 +82,14 @@ export const grandmaTools = [
     execute: async ({ direction, meters }) => runAction({ type: 'move', direction, meters }),
   }),
   tool({
-    name: 'turn_body', description: 'Turn Grandma\'s whole body left or right.',
+    name: 'turn_body', description: 'Turn Grandma\'s whole body left or right. Requests about the camera, selfie mode, or showing the room use switch_camera instead.',
     parameters: z.object({ direction: z.enum(['left', 'right']), degrees: z.number().min(1).max(180).nullable().describe('null for a quarter turn.') }),
     execute: async ({ direction, degrees }) => runAction({ type: 'turn', direction, ...(degrees ? { degrees } : {}) }),
+  }),
+  tool({
+    name: 'turn_around', description: 'Turn Grandma’s whole body around by a half-turn. Use when the caller says turn around or turn yourself around without naming a camera. Left versus right does not matter for a half-turn; this tool chooses left, so do not ask the caller for a direction.',
+    parameters: z.object({}),
+    execute: async () => runAction({ type: 'turn', direction: 'left', degrees: 180 }),
   }),
   tool({
     name: 'look', description: 'Point Grandma\'s head (and the handheld phone) in a direction.',
@@ -128,9 +133,14 @@ export const grandmaTools = [
   tool({ name: 'put_phone_on_shelf', description: 'Set the phone down on the dry shelf to free both hands.', parameters: z.object({}), execute: async () => runAction({ type: 'place_phone', target: { id: 'dry_spot' } }) }),
   tool({ name: 'pick_up_phone', description: 'Pick the phone back up from the shelf.', parameters: z.object({}), execute: async () => runAction({ type: 'retrieve_phone' }) }),
   tool({
-    name: 'switch_camera', description: 'Flip the phone camera. Front shows Grandma\'s face; back shows the room.',
+    name: 'switch_camera', description: 'Switch the phone lens without turning Grandma. Front/selfie shows her face; back/rear shows the room. Turn off selfie mode or stop showing your face means back. Turn the camera around means the opposite of the current lens; inspect look_around if needed.',
     parameters: z.object({ camera: z.enum(['front', 'back']) }),
     execute: async ({ camera }) => runAction({ type: 'switch_camera', mode: camera === 'front' ? 'selfie' : 'rear' }),
+  }),
+  tool({
+    name: 'flip_camera', description: 'Turn the phone camera around: flip to the opposite lens without turning Grandma’s body. Use for flip the camera, turn the camera around, or the other camera when no fixed front/back lens was requested. This always reads the current lens before choosing the opposite.',
+    parameters: z.object({}),
+    execute: async () => runAction({ type: 'switch_camera', mode: game.getObservation().phone.mode === 'selfie' ? 'rear' : 'selfie' }),
   }),
   tool({
     name: 'wait', description: 'Wait without doing anything. The water keeps rising.',

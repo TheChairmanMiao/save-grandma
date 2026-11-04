@@ -8,11 +8,11 @@ import { playDemoSound } from './demo-audio';
 /** Scripted fallback used only when the realtime voice agent is unavailable. */
 export const GREETING = GRANDMA_GREETING;
 export const RULES = [
-  'Grandma only does what you tell her.',
+  'Grandma tries what you say — sometimes a little too literally.',
   'You have five minutes before the room floods.',
   'The wrench is in one of the three toolboxes on the table.',
   'Say “front camera” to see Grandma, “rear camera” for the room.',
-  'Be specific: “open the red toolbox”, “turn the pipe counterclockwise”.',
+  'Correct her when she gets it wrong. Clear details help her figure it out.',
 ];
 const FALLBACK_GREETING_SECONDS = 6;
 const MAX_CONNECT_WAIT_SECONDS = 12;

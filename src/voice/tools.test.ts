@@ -36,6 +36,23 @@ group('Grandma voice tools', () => {
     expect(['clarification_needed', 'completed']).toContain(open.status);
   });
 
+  it('flips the current camera in both directions without turning Grandma', async () => {
+    const facing = gameController.getObservation().grandma.facingDegrees;
+    expect((await call('flip_camera')).status).toBe('completed');
+    expect(gameController.getObservation().phone.mode).toBe('rear');
+    expect((await call('flip_camera')).status).toBe('completed');
+    expect(gameController.getObservation().phone.mode).toBe('selfie');
+    expect(gameController.getObservation().grandma.facingDegrees).toBe(facing);
+  });
+
+  it('performs a literal half-turn without changing the selected camera', async () => {
+    const before = gameController.getObservation();
+    expect((await call('turn_around')).status).toBe('completed');
+    const after = gameController.getObservation();
+    expect(Math.abs(after.grandma.facingDegrees - before.grandma.facingDegrees)).toBe(180);
+    expect(after.phone.mode).toBe(before.phone.mode);
+  });
+
   it('asks which way when no direction was given', async () => {
     await call('walk_to', { thing: 'pipe', color: null });
     const twist = await call('twist', { thing: 'pipe', color: null, direction: null });

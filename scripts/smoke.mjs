@@ -17,7 +17,7 @@ page.on('console', m => { if (m.type() === 'error' && !m.text().startsWith('[voi
 page.on('requestfailed', r => errors.push(`${r.url()} ${r.failure()?.errorText}`));
 const checks = [];
 const tell = async (text, button = false) => { const input = page.getByLabel('Tell Grandma what to do'); await input.fill(text); if (button) await page.getByRole('button', { name: 'Send instruction' }).click(); else await input.press('Enter'); };
-const connected = () => page.getByPlaceholder('Tell Grandma…').waitFor({ timeout: 40000 });
+const connected = () => page.getByRole('button', { name: 'How to play' }).waitFor({ timeout: 40000 });
 try {
   await page.emulateMedia({ reducedMotion: 'reduce' }); // the splash button wiggles forever otherwise
   await page.goto(url, { waitUntil: 'networkidle' });
@@ -41,11 +41,26 @@ try {
   await page.getByRole('button', { name: 'Resume call' }).click();
   checks.push('Reopen help and resume without advancing the flood');
   await tell('switch to the front camera');
-  await page.getByText('switch camera completed.', { exact: false }).waitFor();
+  await page.locator('[data-camera-mode="selfie"]').waitFor();
   await page.screenshot({ path: `artifacts/${channel}-selfie.png` });
-  await tell('switch to the rear camera', true);
-  await page.getByText('switch camera completed.', { exact: false }).nth(1).waitFor();
-  checks.push('Typed instruction switches camera');
+  await tell('turn off selfie mode', true);
+  await page.locator('[data-camera-mode="rear"]').waitFor();
+  const facing = await page.getByTestId('phone').getAttribute('data-grandma-facing');
+  await tell('turn the camera around');
+  await page.locator('[data-camera-mode="selfie"]').waitFor();
+  assert.equal(await page.getByTestId('phone').getAttribute('data-grandma-facing'), facing, 'A camera command must not turn Grandma');
+  await tell('turn around');
+  await page.waitForFunction(previous => document.querySelector('[data-testid="phone"]')?.getAttribute('data-grandma-facing') !== previous, facing);
+  await tell('No, the camera, not you');
+  await page.locator('[data-camera-mode="rear"]').waitFor();
+  checks.push('Exact camera requests switch lens; a literal body turn recovers from the caller’s correction');
+  await tell('what even is this');
+  const firstUnknown = await page.getByRole('log').locator('p.grandma').last().innerText();
+  await tell('what even is this');
+  const secondUnknown = await page.getByRole('log').locator('p.grandma').last().innerText();
+  assert.notEqual(firstUnknown, secondUnknown, 'Unknown requests must develop instead of repeating one refusal');
+  await tell('stop showing your face');
+  await page.locator('[data-camera-mode="rear"]').waitFor();
   await page.waitForTimeout(11000);
   assert.equal(await page.getByLabel('Tell Grandma what to do').isEnabled(), true, 'Typed play must not expire after ten seconds');
   await tell('go to the toolboxes, open the red toolbox, open the blue toolbox, open the green toolbox, pick up the wrench, walk to the pipe, bend down, tighten the pipe');

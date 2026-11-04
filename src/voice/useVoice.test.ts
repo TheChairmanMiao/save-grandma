@@ -6,16 +6,39 @@ const harness = vi.hoisted(() => {
     on(name: string, callback: (...args: any[]) => void) { this.handlers.set(name, [...(this.handlers.get(name) ?? []), callback]); }
     emit(name: string, ...args: any[]) { this.handlers.get(name)?.forEach(callback => callback(...args)); }
   }
-  class Transport extends Emitter { sendEvent = vi.fn(); }
+  class Transport extends Emitter {
+    sendEvent = vi.fn();
+    updateSessionConfig = vi.fn();
+    requestResponse = vi.fn(() => this.sendEvent({ type: 'response.create' }));
+    sender: { track: MediaStreamTrack | null; replaceTrack: ReturnType<typeof vi.fn> };
+    connectionState: { peerConnection: { getSenders: () => { track: MediaStreamTrack | null; replaceTrack: ReturnType<typeof vi.fn> }[] } };
+    constructor(public options: { mediaStream: MediaStream; audioElement: HTMLAudioElement }) {
+      super();
+      this.sender = { track: options.mediaStream.getAudioTracks()[0], replaceTrack: vi.fn(async (track: MediaStreamTrack | null) => { this.sender.track = track; }) };
+      this.connectionState = { peerConnection: { getSenders: () => [this.sender] } };
+    }
+  }
   class Session extends Emitter {
     transport: Transport;
-    close = vi.fn(); mute = vi.fn(); interrupt = vi.fn(); sendMessage = vi.fn();
+    close = vi.fn();
+    mute = vi.fn((value: boolean) => { if (this.transport.sender.track) this.transport.sender.track.enabled = !value; });
+    interrupt = vi.fn();
+    sendMessage = vi.fn((text: string) => { this.transport.sendEvent({ type: 'conversation.item.create', text }); this.transport.requestResponse(); });
     connect = vi.fn(() => state.connectionResults.shift() ?? Promise.resolve());
-    constructor(_agent: unknown, public options: { transport: Transport; config: { outputModalities: string[]; audio: { output: { voice: string } } } }) { super(); this.transport = options.transport; state.sessions.push(this); }
+    constructor(_agent: unknown, public options: { transport: Transport; config: { outputModalities: string[]; audio: { input: { turnDetection: { createResponse: boolean; interruptResponse: boolean } }; output: { voice: string } } } }) { super(); this.transport = options.transport; state.sessions.push(this); }
+  }
+  class Context {
+    state = 'suspended';
+    track = { kind: 'audio', enabled: true, stop: vi.fn() };
+    stream = { getTracks: () => [this.track], getAudioTracks: () => [this.track] };
+    resume = vi.fn((): Promise<void> => { this.state = 'running'; return state.resumeResults.shift() ?? Promise.resolve(); });
+    close = vi.fn(async () => { this.state = 'closed'; });
+    createMediaStreamDestination = () => ({ stream: this.stream });
+    constructor() { state.contexts.push(this); }
   }
   const state = {
     values: [] as unknown[], cleanups: [] as (() => void)[], sessions: [] as Session[],
-    connectionResults: [] as Promise<void>[], Session, Transport,
+    connectionResults: [] as Promise<void>[], resumeResults: [] as Promise<void>[], contexts: [] as Context[], Session, Transport, Context,
     speak: vi.fn(() => Promise.resolve()), stopSpeaking: vi.fn(),
   };
   return state;
@@ -41,17 +64,23 @@ function deferred<T>() {
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
 }
-function stream() { const stop = vi.fn(); return { value: { getTracks: () => [{ stop }] } as unknown as MediaStream, stop }; }
+function stream() {
+  const stop = vi.fn(); const track = { kind: 'audio', enabled: true, stop };
+  return { value: { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream, stop, track };
+}
 const flush = async () => { await vi.dynamicImportSettled(); for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const token = () => Promise.resolve({ ok: true, json: async () => ({ value: 'ek_test' }) });
 
 beforeEach(() => {
   vi.useFakeTimers();
   harness.values.length = harness.cleanups.length = harness.sessions.length = harness.connectionResults.length = 0;
+  harness.contexts.length = harness.resumeResults.length = 0;
   harness.speak.mockClear(); harness.stopSpeaking.mockClear();
   vi.stubGlobal('fetch', vi.fn(token));
   vi.stubGlobal('document', { createElement: () => ({ autoplay: false, muted: false, play: vi.fn(() => Promise.resolve()), pause: vi.fn(), src: '', srcObject: null }) });
   vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn(async () => stream().value) } });
+  vi.stubGlobal('AudioContext', harness.Context);
+  vi.stubGlobal('window', Object.assign(new EventTarget(), { location: { origin: 'https://demo.example' } }));
 });
 afterEach(() => {
   harness.cleanups.splice(0).forEach(cleanup => cleanup());
@@ -59,6 +88,241 @@ afterEach(() => {
 });
 
 describe('voice connection lifecycle without network or microphone access', () => {
+  it('keeps public call authorization on the same-origin relay and closes the server call when leaving', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({ value: 'ek_demo_single_use', relay: true }) } as Response);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    expect(harness.sessions[0].connect).toHaveBeenCalledWith({ apiKey: 'ek_demo_single_use', url: 'https://demo.example/api/realtime-call' });
+    window.dispatchEvent(new Event('pagehide'));
+    expect(harness.sessions[0].close).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenLastCalledWith('/api/realtime-close', { method: 'POST', headers: { Authorization: 'Bearer ek_demo_single_use' }, keepalive: true });
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['DAILY_LIMIT', 'Today’s 10 AI calls are used up'],
+    ['BUSY', 'Grandma is on another AI call'],
+  ])('explains %s without opening media or another call', async (code, message) => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, json: async () => ({ code }) } as Response);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    expect(harness.values[0]).toBe('error');
+    expect(harness.values[1]).toContain(message);
+    expect(harness.sessions).toHaveLength(0);
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+  });
+  it('connects typed chat with native spoken replies without requesting microphone permission', async () => {
+    const voice = useVoice();
+    const pending = voice.connect({ microphone: false });
+    expect(harness.contexts).toHaveLength(1);
+    expect(harness.contexts[0].resume).toHaveBeenCalledOnce();
+    await pending;
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    const s = harness.sessions[0];
+    expect(s.options.config.outputModalities).toEqual(['audio']);
+    expect(s.options.config.audio.input.turnDetection).toMatchObject({ createResponse: false, interruptResponse: false });
+    expect(s.transport.sender.track).toBe(harness.contexts[0].track);
+    expect(s.transport.sender.track?.enabled).toBe(false);
+    expect(harness.values[0]).toBe('connected');
+    expect(harness.values[9]).toBe(false);
+    s.emit('transport_event', { type: 'input_audio_buffer.speech_started' });
+    s.emit('transport_event', { type: 'input_audio_buffer.committed' });
+    expect(harness.values[8]).toBe(false);
+    expect(harness.values[5]).toBe(0);
+    expect(harness.values[6]).toBe(0);
+    expect(s.transport.sendEvent).not.toHaveBeenCalled();
+  });
+
+  it('sends each typed message once and lets the SDK request exactly one response', async () => {
+    const voice = useVoice();
+    expect(voice.sendText('Not connected yet.')).toBe(false);
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0];
+    expect(voice.sendText('  turn off selfie mode  ')).toBe(true);
+    expect(s.interrupt).toHaveBeenCalledOnce();
+    expect(s.sendMessage).toHaveBeenCalledExactlyOnceWith('turn off selfie mode');
+    expect(s.transport.sendEvent.mock.calls.filter(([event]) => event.type === 'response.create')).toHaveLength(1);
+    expect(harness.values[8]).toBe(true);
+    expect(s.transport.options.audioElement.muted).toBe(false);
+    expect(voice.sendText('  ')).toBe(false);
+    expect(s.sendMessage).toHaveBeenCalledOnce();
+    // An old response's cancellation may complete while the new reply is queued.
+    s.emit('transport_event', { type: 'response.done' });
+    expect(harness.values[8]).toBe(true);
+    s.emit('transport_event', { type: 'response.created' });
+    expect(harness.values[8]).toBe(true);
+    s.emit('transport_event', { type: 'response.done' });
+    expect(harness.values[8]).toBe(false);
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(s.transport.options.audioElement.muted).toBe(false);
+  });
+
+  it('exposes stable SDK item IDs for transcript reconciliation', async () => {
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0];
+    const user = { itemId: 'user-1', type: 'message', role: 'user', status: 'completed', content: [{ type: 'input_text', text: 'Turn the camera around.' }] };
+    s.emit('history_updated', [user, { itemId: 'assistant-1', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_audio', transcript: 'All right, kid.' }] }]);
+    expect(harness.values[10]).toEqual({ id: 'assistant-1', text: 'All right, kid.' });
+    expect(harness.values[11]).toEqual({ id: 'user-1', text: 'Turn the camera around.' });
+    const stableAssistant = harness.values[10];
+    s.emit('history_updated', [user, { itemId: 'assistant-1', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_audio', transcript: 'All right, kid.' }] }]);
+    expect(harness.values[10]).toBe(stableAssistant);
+    s.emit('history_updated', [user, { ...user, itemId: 'user-2' }]);
+    expect(harness.values[11]).toEqual({ id: 'user-2', text: 'Turn the camera around.' });
+  });
+
+  it('automatically tracks speech response lifecycle without manual respond calls', async () => {
+    const voice = useVoice();
+    await voice.connect();
+    const s = harness.sessions[0];
+    s.emit('transport_event', { type: 'input_audio_buffer.committed' });
+    expect(harness.values[8]).toBe(true);
+    s.emit('transport_event', { type: 'response.created' });
+    s.emit('transport_event', { type: 'response.done' });
+    expect(harness.values[8]).toBe(false);
+    expect(s.transport.sendEvent).not.toHaveBeenCalled();
+  });
+
+  it('enables and disables the microphone by swapping tracks in the same conversation', async () => {
+    const mic = stream();
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockResolvedValue(mic.value);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0]; const context = harness.contexts[0];
+    expect(await voice.setMicrophoneEnabled(true)).toBe(true);
+    expect(s.transport.sender.track).toBe(mic.track);
+    expect(mic.track.enabled).toBe(true);
+    expect(harness.values[9]).toBe(true);
+    expect(s.transport.updateSessionConfig).toHaveBeenLastCalledWith(expect.objectContaining({
+      outputModalities: ['audio'],
+      audio: expect.objectContaining({
+        input: expect.objectContaining({
+          transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' },
+          turnDetection: expect.objectContaining({ createResponse: true, interruptResponse: true }),
+        }),
+        output: expect.objectContaining({ voice: 'marin' }),
+      }),
+    }));
+    expect(await voice.setMicrophoneEnabled(false)).toBe(false);
+    expect(s.transport.sender.track).toBe(context.track);
+    expect(mic.stop).toHaveBeenCalledOnce();
+    expect(harness.values[9]).toBe(false);
+    expect(s.transport.updateSessionConfig).toHaveBeenLastCalledWith(expect.objectContaining({ audio: expect.objectContaining({ input: expect.objectContaining({ turnDetection: expect.objectContaining({ createResponse: false, interruptResponse: false }) }) }) }));
+    expect(harness.sessions).toHaveLength(1);
+    expect(s.close).not.toHaveBeenCalled();
+    expect(voice.sendText('Keep talking.')).toBe(true);
+    voice.disconnect();
+    expect(context.track.stop).toHaveBeenCalledOnce();
+    expect(context.close).toHaveBeenCalledOnce();
+  });
+
+  it('disables automatic speech responses during app mute and restores them only for an active mic', async () => {
+    const voice = useVoice();
+    await voice.connect();
+    const s = harness.sessions[0];
+    expect(s.options.config.audio.input.turnDetection).toMatchObject({ createResponse: true, interruptResponse: true });
+    voice.setMute(true);
+    expect(s.transport.updateSessionConfig).toHaveBeenLastCalledWith(expect.objectContaining({ audio: expect.objectContaining({ input: expect.objectContaining({ turnDetection: expect.objectContaining({ createResponse: false, interruptResponse: false }) }) }) }));
+    s.emit('transport_event', { type: 'input_audio_buffer.committed' });
+    expect(harness.values[8]).toBe(false);
+    voice.setMute(false);
+    expect(s.transport.updateSessionConfig).toHaveBeenLastCalledWith(expect.objectContaining({ audio: expect.objectContaining({ input: expect.objectContaining({ turnDetection: expect.objectContaining({ createResponse: true, interruptResponse: true }) }) }) }));
+  });
+
+  it('starts app-muted mic sessions with automatic responses disabled and applies mute changes after readiness', async () => {
+    const waiting = deferred<void>();
+    harness.connectionResults.push(waiting.promise);
+    const voice = useVoice();
+    voice.setMute(true);
+    const pending = voice.connect();
+    await flush();
+    const s = harness.sessions[0];
+    expect(s.options.config.audio.input.turnDetection).toMatchObject({ createResponse: false, interruptResponse: false });
+    voice.setMute(false);
+    expect(s.transport.updateSessionConfig).not.toHaveBeenCalled();
+    waiting.resolve(); await pending;
+    expect(s.transport.updateSessionConfig).toHaveBeenLastCalledWith(expect.objectContaining({ audio: expect.objectContaining({ input: expect.objectContaining({ turnDetection: expect.objectContaining({ createResponse: true, interruptResponse: true }) }) }) }));
+  });
+
+  it('keeps AI typed chat connected if microphone permission is denied', async () => {
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValue(new DOMException('Blocked', 'NotAllowedError'));
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    expect(await voice.setMicrophoneEnabled(true)).toBe(false);
+    expect(harness.values[0]).toBe('connected');
+    expect(harness.values[9]).toBe(false);
+    expect(harness.values[1]).toMatch(/still chat by typing/);
+    expect(voice.sendText('What can you see?')).toBe(true);
+    expect(harness.sessions[0].close).not.toHaveBeenCalled();
+  });
+
+  it('stops a microphone stream returned after the user turned microphone input off', async () => {
+    const permission = deferred<MediaStream>(); const mic = stream();
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockReturnValue(permission.promise);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const pending = voice.setMicrophoneEnabled(true);
+    expect(voice.setMicrophoneEnabled(true)).toBe(pending);
+    await voice.setMicrophoneEnabled(false);
+    expect(await pending).toBe(false);
+    permission.resolve(mic.value); await flush();
+    expect(mic.stop).toHaveBeenCalledOnce();
+    expect(harness.sessions[0].transport.sender.track).toBe(harness.contexts[0].track);
+    expect(harness.values[0]).toBe('connected');
+    expect(harness.values[9]).toBe(false);
+  });
+
+  it('closes the silent context and disposes a late microphone stream after disconnect', async () => {
+    const permission = deferred<MediaStream>(); const mic = stream();
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockReturnValue(permission.promise);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const context = harness.contexts[0];
+    const pending = voice.setMicrophoneEnabled(true);
+    voice.disconnect();
+    expect(await pending).toBe(false);
+    permission.resolve(mic.value); await flush();
+    expect(context.close).toHaveBeenCalledOnce();
+    expect(context.track.stop).toHaveBeenCalledOnce();
+    expect(mic.stop).toHaveBeenCalledOnce();
+    expect(harness.values[0]).toBe('idle');
+  });
+
+  it('releases a newly permitted microphone when replacing the audio sender fails', async () => {
+    const mic = stream();
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockResolvedValue(mic.value);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    harness.sessions[0].transport.sender.replaceTrack.mockRejectedValueOnce(new Error('Failed to replace'));
+    expect(await voice.setMicrophoneEnabled(true)).toBe(false);
+    expect(mic.stop).toHaveBeenCalledOnce();
+    expect(harness.values[0]).toBe('connected');
+    expect(harness.values[9]).toBe(false);
+  });
+
+  it('cleans up the silent context when the backend is unavailable', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, json: async () => ({}) } as Response);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    expect(harness.contexts[0].close).toHaveBeenCalledOnce();
+    expect(harness.contexts[0].track.stop).toHaveBeenCalledOnce();
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    expect(harness.values[0]).toBe('error');
+    expect(harness.values[8]).toBe(false);
+  });
+
+  it('closes an audio context even if its resume finishes after disconnection', async () => {
+    const resumed = deferred<void>();
+    harness.resumeResults.push(resumed.promise);
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    voice.disconnect();
+    resumed.resolve(); await flush();
+    expect(harness.contexts[0].state).toBe('closed');
+    expect(harness.contexts[0].close).toHaveBeenCalledOnce();
+  });
+
   it('always requests native OpenAI audio even when legacy provider environment values exist', async () => {
     vi.stubEnv('VITE_ELEVENLABS_VOICE', 'true');
     vi.stubEnv('ELEVENLABS_API_KEY', 'unused-legacy-value');
