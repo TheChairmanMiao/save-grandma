@@ -42,7 +42,7 @@ There is no developer console anymore; the scripted presets in `src/game/presets
 - Seeded stress-dependent ambiguity (15/30/45%). Precise instructions have no random interpretation failures. Unclear targets/directions return structured clarification results.
 - Cancellation at safe points, pause/resume, full reset, stale-run rejection, progress/results/terminal events and a bounded queue.
 - Native OpenAI Realtime typed or microphone input, language interpretation and spoken dialogue; scripted offline fallback and a call transcript showing results, clarifications and misunderstandings.
-- An original ornery Brooklyn grandma direction: affectionate exasperation, dry humor, regional pronunciation and brief bursts of panic. The shared direction in `src/voice/persona.ts` governs the agent, greeting and final spoken lines. The current audition uses the built-in `marin` voice at speed 1.1. A real local recording is available in ignored `artifacts/grandma-native-audition.mp3`; perceived age, accent and comic performance remain creative listening judgments.
+- An original ornery Brooklyn grandma direction: affectionate impatience, understated dry humor and natural delivery with a light Brooklyn flavor. The shared direction in `src/voice/persona.ts` governs the agent, greeting and final spoken lines. Playback runs at normal speed (1.0); the default remains `marin` on Mini while the voice comparison is reviewed. The `/auditions` page compares three voices across Mini and full Realtime using identical scripted lines. Perceived age, accent and comic performance remain creative listening judgments.
 
 ## Team handoff
 

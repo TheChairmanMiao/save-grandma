@@ -1,0 +1,61 @@
+{
+  "script": "Sweetheart, the bathroom\u2019s flooding, and I\u2019m not buying waterfront property today.\nYou said left. I turned right. Terrific. Now the sink\u2019s having a nervous breakdown.\nEasy, kid. One thing at a time. I\u2019m ornery, not waterproof.\nThere. It stopped. You did good, sweetheart. Don\u2019t let it go to your head.",
+  "speed": 1,
+  "clips": [
+    {
+      "voice": "marin",
+      "model": "gpt-realtime-2.1-mini",
+      "mp3": "audio/marin-mini.mp3",
+      "durationSeconds": 17.55,
+      "sha256": "3a9c25c37a6153a381df2910531d944e4f82fa911bf4609e35fab4e20ca03fe2",
+      "recordedAt": "2026-11-04T17:33:44.920Z",
+      "personaHash": "c2fd9d9bf339b3b033abe407b87dc58271301d7ae80783f4be92d35381a7af5a"
+    },
+    {
+      "voice": "marin",
+      "model": "gpt-realtime-2.1",
+      "mp3": "audio/marin-full.mp3",
+      "durationSeconds": 22.45,
+      "sha256": "682f207a9d4e3b5cb82e437cc733276d6bf369a37f1a93c352e2779bb44c2734",
+      "recordedAt": "2026-11-04T17:33:51.872Z",
+      "personaHash": "c2fd9d9bf339b3b033abe407b87dc58271301d7ae80783f4be92d35381a7af5a"
+    },
+    {
+      "voice": "coral",
+      "model": "gpt-realtime-2.1-mini",
+      "mp3": "audio/coral-mini.mp3",
+      "durationSeconds": 21.9,
+      "sha256": "3f0cc6b49b58e192fd1a2c55e3b64e5285c783c6522868d28130ae71671e1614",
+      "recordedAt": "2026-11-04T17:33:55.471Z",
+      "personaHash": "c2fd9d9bf339b3b033abe407b87dc58271301d7ae80783f4be92d35381a7af5a"
+    },
+    {
+      "voice": "coral",
+      "model": "gpt-realtime-2.1",
+      "mp3": "audio/coral-full.mp3",
+      "durationSeconds": 24.1,
+      "sha256": "a626756430ff5388d70b9b710ce7599ae677fc47f746bf65aaff8a22bf8fe2a0",
+      "recordedAt": "2026-11-04T17:34:01.697Z",
+      "personaHash": "c2fd9d9bf339b3b033abe407b87dc58271301d7ae80783f4be92d35381a7af5a"
+    },
+    {
+      "voice": "ballad",
+      "model": "gpt-realtime-2.1-mini",
+      "mp3": "audio/ballad-mini.mp3",
+      "durationSeconds": 23.45,
+      "sha256": "f892d3042f4aaf4dac19f80ee55bfca24769e1d7763c6675d5ef3e9b3c9f0479",
+      "recordedAt": "2026-11-04T17:34:05.412Z",
+      "personaHash": "c2fd9d9bf339b3b033abe407b87dc58271301d7ae80783f4be92d35381a7af5a"
+    },
+    {
+      "voice": "ballad",
+      "model": "gpt-realtime-2.1",
+      "mp3": "audio/ballad-full.mp3",
+      "durationSeconds": 22.7,
+      "sha256": "97e2ab8fee6f25da6654f641643fd34928d6f10b682d8a1471a072bd850f4481",
+      "recordedAt": "2026-11-04T17:34:10.917Z",
+      "personaHash": "c2fd9d9bf339b3b033abe407b87dc58271301d7ae80783f4be92d35381a7af5a"
+    }
+  ],
+  "source": "OpenAI Realtime API built-in voices; identical script and simplified persona; no speed or pitch processing"
+}

@@ -2,7 +2,7 @@
 
 ## Current local checks
 
-On 2026-11-04, **170 tests passed**, TypeScript passed, and the hosted Worker build passed. Tests cover deterministic simulation, command sessions, parser and offline character recovery, tools, voice lifecycle, embedded assets, and the durable API admission gate. The Worker contains 10 client assets and compresses to approximately 3.81 MB.
+On 2026-11-04, **182 tests passed**, TypeScript passed, and the hosted Worker build passed. Tests cover deterministic simulation, command sessions, parser and offline character recovery, tools, voice lifecycle, embedded assets, audition publishing, audio byte ranges, and the durable API admission gate. The Worker contains 18 client assets and compresses to approximately 4.79 MB.
 
 Coverage includes the wrench solution, five-minute flooding, bounded towels/bucket, wrong rotations, tools, posture, reach, hands, blocked paths, seeded ambiguity, precise qualifiers, clarification, phone placement/retrieval, reference frames, sequencing, cancellation, pause/resume, reset, stale requests and terminal outcomes. Typed-command regressions verify that “tighten the pipe” seals the red pipe counterclockwise while an explicit clockwise instruction worsens the leak.
 
@@ -29,6 +29,16 @@ The hosted voice deployment was verified on 2026-11-04. A real call produced 620
 That first runner stalled after its game/audio assertions while awaiting Playwright's `Response.finished()` on the keepalive close request. It was stopped after confirming server closure independently. The harness now saves evidence before cleanup and bounds every cleanup wait; `node scripts/audition.mjs --check-cleanup` verifies the fix with mocks. No second paid call was used for that harness correction. This is not a claim that the first runner exited cleanly.
 
 Public probes for `.env.local`, `.git/config` and server source returned 404 with no-store caching. GET on the token route returned 405; a cross-origin token POST returned 403. The post-commit key scan covered 90 tracked files, 249 reachable source/configuration blobs up to 2 MiB, and the built Worker/manifest, without printing the key.
+
+## Normal-speed voice comparison
+
+Six direct server-side Realtime sessions recorded the same 50-word script with Marin, Coral and Ballad on Mini and full Realtime. Every session acknowledged its requested model/voice, speed 1.0, low reasoning and 24 kHz mono PCM; every transcript matched the script. The recordings range from 17.55 to 24.10 seconds. Raw WAVs and sanitized usage receipts are in ignored `artifacts/voice-comparison/`; six MP3s and their manifest are tracked under `auditions/` for reproducible publication. They have no pitch, speed, or voice filtering applied.
+
+The opt-in recorder limits each sample to 60 seconds and 1,500 output tokens, closes its socket, and reuses only matching completed samples. Its offline check exercises configuration acknowledgements, WAV validation, one-response behavior and sanitized usage without opening a network connection. An independent mocked timeout/error check verified forced socket teardown and omission of private provider error text. These auditions did not use the public demo's daily reservations.
+
+The shared voice direction now favors natural delivery with light Brooklyn flavor, affectionate impatience and understated dry humor. Forced pitch/gravel/nasal/brisk cues were removed. Spoken game reactions are encouraged after the requested action or small prerequisite sequence instead of a separate narration for every intermediate step. The game remains on Marin/Mini while the six comparison performances are reviewed. Listening quality and the final character casting remain the owner's creative judgment.
+
+The comparison page passed Chrome checks for all six MP3s decoding, playing and seeking, one recording playing at a time, no audio download before playback, no API calls, correct byte-range responses and no browser errors. Desktop and 390×844 layouts were checked for overflow and readable content. The browser report and viewport screenshots are in `artifacts/voice-comparison/`. A full-page mobile screenshot showed a Chrome capture artifact; separate top/bottom viewport captures and DOM measurements confirmed the actual page has one heading, three voice cards and six players.
 
 ## Repeatable checks
 
