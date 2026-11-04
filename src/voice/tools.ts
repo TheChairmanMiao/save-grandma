@@ -110,7 +110,7 @@ export const grandmaTools = [
   }),
   tool({
     name: 'twist', description: 'Turn the pipe or fitting the caller names, using the wrench. Only pass a direction the caller actually said.',
-    parameters: z.object({ thing, color, direction: z.enum(['clockwise', 'counterclockwise']).nullable().describe('null if the caller did not say which way. "Tighten"/"righty-tighty"/"close" = clockwise; "loosen"/"open" = counterclockwise.') }),
+    parameters: z.object({ thing, color, direction: z.enum(['clockwise', 'counterclockwise']).nullable().describe('null if the caller did not say which way. For this red pipe, "tighten"/"close"/"seal" means counterclockwise. An explicit "clockwise"/"right"/"righty-tighty" means clockwise and takes precedence over a repair verb. "Counterclockwise"/"left"/"loosen"/"open" means counterclockwise.') }),
     execute: async ({ thing, color, direction }) => {
       // Turning the pipe implies getting to it: walk over and bend down first, then turn. The game still
       // checks reach, posture and the wrench at each step, and any failure is reported as-is.

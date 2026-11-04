@@ -55,11 +55,18 @@ function speakProxy(apiKey: string | undefined, voiceId: string | undefined): Pl
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const elevenlabs = !!(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID);
+  // Public builds are static and must never advertise development-only voice endpoints.
+  const voiceAvailable = mode === 'development' && !!env.OPENAI_API_KEY;
+  const elevenlabs = voiceAvailable && !!(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID);
   return {
+    // Only assets imported by the game ship; retain the original recordings/models as source references.
+    publicDir: false,
     plugins: [react(), realtimeToken(env.OPENAI_API_KEY), speakProxy(env.ELEVENLABS_API_KEY, env.ELEVENLABS_VOICE_ID)],
     // Tells the browser whether Grandma's ElevenLabs voice is available (never the key itself).
-    define: { 'import.meta.env.VITE_ELEVENLABS_VOICE': JSON.stringify(String(elevenlabs)) },
+    define: {
+      'import.meta.env.VITE_ELEVENLABS_VOICE': JSON.stringify(String(elevenlabs)),
+      'import.meta.env.VITE_VOICE_AVAILABLE': JSON.stringify(String(voiceAvailable)),
+    },
     build: { rollupOptions: { output: { manualChunks: { three: ['three', '@react-three/fiber'] } } } },
   };
 });

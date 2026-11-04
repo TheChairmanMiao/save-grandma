@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
+import grandmaImage from '../../public/images/grandma-profile.png';
 import { speak } from '../voice/grandma-voice';
 import type { VoiceStatus } from '../voice/useVoice';
+import { playDemoSound } from './demo-audio';
 
 /** Scripted fallback used only when the realtime voice agent is unavailable. */
 export const GREETING = 'Honey, I’m trapped in the bathroom and it’s flooding in here! Can you help me get out of this pickle?';
 export const RULES = [
   'Grandma only does what you tell her.',
-  'You have one minute before the room floods.',
+  'You have five minutes before the room floods.',
   'The wrench is in one of the three toolboxes on the table.',
   'Say “front camera” to see Grandma, “rear camera” for the room.',
   'Be specific: “open the red toolbox”, “turn the pipe counterclockwise”.',
 ];
-/** Served from public/audio; loops until the call is answered. */
-const RINGTONE = '/audio/iphone-ringtone.mp3';
 const FALLBACK_GREETING_SECONDS = 6;
 const MAX_CONNECT_WAIT_SECONDS = 12;
 const MAX_GREETING_SECONDS = 7;
@@ -38,14 +38,11 @@ export default function Intro({ voice, onGreeting, onDone, onFinished }: { voice
   const live = useRef(false);
   const hasSpoken = useRef(false);
 
-  // The ringtone loops until the player picks up. Mounting follows the Start click, so playback is allowed.
+  // Original two-tone ringtone; no third-party recording is loaded.
   useEffect(() => {
     if (answered) return;
-    const ring = new Audio(RINGTONE);
-    ring.loop = true;
-    ring.volume = 0.8;
-    void ring.play().catch(() => {});
-    return () => { ring.pause(); ring.src = ''; };
+    const ring = playDemoSound('ringtone', 0.8);
+    return ring.stop;
   }, [answered]);
   useEffect(() => {
     if (!answered) return;
@@ -84,7 +81,7 @@ export default function Intro({ voice, onGreeting, onDone, onFinished }: { voice
   }, [phase]);
 
   if (phase === 'ringing') return <div className="intro-black incoming-call" role="dialog" aria-label="Incoming call from Granny">
-    <div className="caller-avatar" aria-hidden="true"><img src="/images/grandma-profile.png" alt="" width={1254} height={1254} /></div>
+    <div className="caller-avatar" aria-hidden="true"><img src={grandmaImage} alt="" width={1254} height={1254} /></div>
     <h2>Granny</h2>
     <p>{answered ? 'Connecting…' : 'incoming call'}</p>
     <button type="button" className="answer-button" onClick={() => setAnswered(true)} disabled={answered} aria-label="Answer the call">

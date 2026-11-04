@@ -4,7 +4,7 @@ import type { CommandStep } from '../game/command-session';
 /**
  * PLACEHOLDER for Yao's voice agent.
  *
- * Turns a typed line such as "grab the wrench, go to the pipe, bend down, turn it clockwise"
+ * Turns a typed line such as "grab the wrench, go to the pipe, bend down, tighten the pipe"
  * into the same structured steps the voice adapter will produce. It is a small keyword matcher,
  * not a language model, so it only understands the phrasings listed in `EXAMPLES`.
  * The game itself never parses language; this module exists so the loop is playable before
@@ -78,8 +78,10 @@ function parseClause(raw: string): Action | undefined {
   }
 
   if (/\b(turn|rotate|twist|tighten|loosen|close|shut|crank|fix)\b/.test(text) && object === 'pipe_joint') {
-    const dir = /\b(counter ?clockwise|anticlockwise|anti clockwise|the other way|loosen|open)\b/.test(text) ? 'counterclockwise'
-      : /\b(clockwise|tighten|close|shut|righty)\b/.test(text) ? 'clockwise' : undefined;
+    // The red pipe seals counterclockwise. Honor an explicit direction before an intended repair.
+    const dir = /\b(counter ?clockwise|anticlockwise|anti clockwise|the other way)\b/.test(text) ? 'counterclockwise'
+      : /\b(clockwise|righty)\b/.test(text) ? 'clockwise'
+      : /\b(tighten|close|shut|loosen|open)\b/.test(text) ? 'counterclockwise' : undefined;
     return { type: 'rotate', target: target(object), direction: dir };
   }
   if (/\b(turn|rotate|twist)\b/.test(text) && /\b(it|that)\b/.test(text) && !object) {

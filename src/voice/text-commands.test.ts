@@ -18,7 +18,8 @@ describe('typed instruction placeholder', () => {
     expect(actions('turn the pipe clockwise')).toEqual([{ type: 'move_to', target: { id: 'pipe_joint' } }, { type: 'bend' }, { type: 'rotate', target: { id: 'pipe_joint' }, direction: 'clockwise' }]);
     expect(actions('turn the pipe')).toEqual([{ type: 'move_to', target: { id: 'pipe_joint' } }, { type: 'bend' }, { type: 'rotate', target: { id: 'pipe_joint' }, direction: undefined }]);
     expect(actions('loosen the joint')).toEqual([{ type: 'move_to', target: { id: 'pipe_joint' } }, { type: 'bend' }, { type: 'rotate', target: { id: 'pipe_joint' }, direction: 'counterclockwise' }]);
-    expect(actions('tighten the joint')).toEqual([{ type: 'move_to', target: { id: 'pipe_joint' } }, { type: 'bend' }, { type: 'rotate', target: { id: 'pipe_joint' }, direction: 'clockwise' }]);
+    expect(actions('tighten the joint')).toEqual([{ type: 'move_to', target: { id: 'pipe_joint' } }, { type: 'bend' }, { type: 'rotate', target: { id: 'pipe_joint' }, direction: 'counterclockwise' }]);
+    expect(actions('tighten the pipe clockwise')).toEqual([{ type: 'move_to', target: { id: 'pipe_joint' } }, { type: 'bend' }, { type: 'rotate', target: { id: 'pipe_joint' }, direction: 'clockwise' }]);
     expect(actions('pick up the wrench')).toEqual([{ type: 'grab', target: { id: 'wrench' } }]);
     expect(actions('put the phone on the shelf')).toEqual([{ type: 'place_phone', target: { id: 'dry_spot' } }]);
     expect(actions('grab the phone')).toEqual([{ type: 'retrieve_phone' }]);
@@ -35,18 +36,36 @@ describe('typed instruction placeholder', () => {
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.phrase).toBe('fix everything');
   });
-  it('wins the wrench solution through the command session', async () => {
+  it.each(['turn the pipe counterclockwise', 'tighten the pipe'])('wins the wrench solution with “%s” through the command session', async instruction => {
     const { controller, simulation } = createGame(7);
     const session = createCommandSession(controller);
     controller.start();
     const turn = session.beginTurn();
-    const parsed = parseInstruction('switch to the rear camera, go to the toolboxes, open the red toolbox, open the blue toolbox, open the green toolbox, pick up the wrench, walk to the pipe, bend down, turn the pipe counterclockwise');
+    const parsed = parseInstruction(`switch to the rear camera, go to the toolboxes, open the red toolbox, open the blue toolbox, open the green toolbox, pick up the wrench, walk to the pipe, bend down, ${instruction}`);
     expect(parsed.ok).toBe(true);
     const pending = session.submit(turn.token, parsed.ok ? parsed.steps : []);
     simulation.advance(40);
     const outcome = await pending;
     expect(outcome.status).toBe('completed');
     expect(controller.getObservation().stage).toBe('won');
+    expect(simulation.readState().leakRate).toBe(0);
+    session.dispose();
+  });
+  it.each(['turn the pipe clockwise', 'tighten the pipe clockwise'])('worsens the leak with the explicit instruction “%s”', async instruction => {
+    const { controller, simulation } = createGame(7);
+    const session = createCommandSession(controller);
+    controller.start();
+    const initialLeakRate = simulation.readState().leakRate;
+    const turn = session.beginTurn();
+    const parsed = parseInstruction(`go to the toolboxes, open the red toolbox, open the blue toolbox, open the green toolbox, pick up the wrench, walk to the pipe, bend down, ${instruction}`);
+    expect(parsed.ok).toBe(true);
+    const pending = session.submit(turn.token, parsed.ok ? parsed.steps : []);
+    simulation.advance(40);
+    const outcome = await pending;
+    expect(outcome.status).toBe('stopped');
+    expect(outcome.code).toBe('LEAK_WORSENED');
+    expect(controller.getObservation().stage).toBe('running');
+    expect(simulation.readState().leakRate).toBeGreaterThan(initialLeakRate);
     session.dispose();
   });
 });

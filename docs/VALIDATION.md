@@ -1,16 +1,27 @@
 # Validation
 
-## Automated simulation
+## Current local checks
 
-Latest integration milestone: **72 tests passed**, TypeScript passed, and Vite produced the production build. The initial dependency installation reported **0 vulnerabilities** after updating the test runner; this milestone adds no dependencies. The available Node 23 runtime ran the checks successfully but is outside Vitest’s declared engine range; `.nvmrc` selects the recommended Node 22 LTS for teammates.
+On 2026-11-04, **100 tests passed**, TypeScript passed, and Vite produced the production build. These checks verify deterministic simulation, command-session behavior, typed parsing, voice-tool execution, voice connection/playback lifecycle and the presentation contract. They do not verify a live provider conversation.
 
-New checks exercise Yao’s command-session wrapper (all solutions, fail-fast sequencing, duplicate deliveries, stale turns, abort/reset/dispose, synchronous cancellation races, pause/resume and terminal outcomes), the shared request schema, Jeff’s camera/animation contract, fixed shelf cameras, camera-relative vertical aiming, and identical simulation outcomes across 60 Hz/irregular/large clock advances. Result-driven cancellation is checked during a large clock advance so accelerated presets cannot execute past an interruption.
+Coverage includes the wrench solution, five-minute flooding, bounded towels/bucket, wrong rotations, tools, posture, reach, hands, blocked paths, seeded ambiguity, precise qualifiers, clarification, phone placement/retrieval, reference frames, sequencing, cancellation, pause/resume, reset, stale requests and terminal outcomes. Typed-command regressions verify that “tighten the pipe” seals the red pipe counterclockwise while an explicit clockwise instruction worsens the leak.
 
-`npm run check` runs strict TypeScript checks and deterministic tests through the public controller facade. Coverage includes all three repair solutions, five-minute flooding, bounded towels/bucket, wrong rotations, tools, posture, reach, hands, blocked paths, patch order, seeded ambiguity, explicit qualifiers, clarification, reliable precise instructions at every stress band, phone placement/retrieval, reference frames, sequential work, cancellation, pause/resume, reset, stale requests, subscriber ownership and terminal events.
+The command-session tests exercise fail-fast sequencing, duplicate deliveries, stale turns, abort/reset/dispose, synchronous cancellation races and pause/resume. Presentation tests exercise opposing phone lenses, fixed shelf cameras, continuous bend/turn/look motion and animation state. These are code-level checks rather than proof of live voice quality or device performance.
 
-`npm run build` verifies the production bundle. The developer console was removed; presets remain test fixtures and are not imported by the app.
+Nineteen offline voice tests cover token failure before microphone access, duplicate connects, connection timeouts, late streams after retry/unmount, stale SDK events, provider disconnects, normal session expiry, output interruption, cancellation settlement, and audio cache cleanup. SDK/media resources are mocked; hook tests use a minimal harness, so real browser permissions and live provider playback remain separate checks.
 
-## Desktop browser smoke test
+## Local Chrome browser check
+
+The actual UI was checked in Chrome against the local development server and the final production preview on 2026-11-04. The production run completed the typed wrench solution, restarted into a second call, switched cameras with Enter and Send, and displayed a rotation clarification. It also reopened help with the flood paused, confirmed typed input remains available after the former speaking deadline, checked a 390×844 viewport for overflow, and verified that an intro completed while hidden immediately pauses the simulation. It reported no browser errors or requests to paid voice endpoints. Screenshots and the report are in the ignored `artifacts/` directory.
+
+These results cover typed play in desktop Chrome, including the production build served locally. They do not establish live microphone/provider behavior, Edge or Safari compatibility, actual mobile device behavior, production-hosted API behavior, or a public deployment.
+
+## Repeatable checks
+
+```sh
+npm run check
+npm run build
+```
 
 With `npm run dev` running:
 
@@ -19,25 +30,20 @@ npm run smoke
 BROWSER_CHANNEL=msedge npm run smoke
 ```
 
-Requires locally installed Chrome/Edge and permission to launch those browser processes. The script drives the actual UI: start, sit through the intro, type a camera switch, type the wrench solution end-to-end, restart, trigger a rotation clarification, toggle the objectives panel, check the 9:16 phone frame, resize to a narrow viewport. It checks console/network errors and horizontal overflow, captures screenshots, and measures median/p95 frame intervals. Outputs live in ignored `artifacts/`.
-
 With `npm run preview` running after a production build:
 
 ```sh
 SMOKE_URL=http://127.0.0.1:4173 SMOKE_PRODUCTION=1 npm run smoke
 ```
 
-## Environment limitations for this implementation run
+The smoke script requires the selected browser to be installed. It drives title/start/answer, typed camera switches, the wrench solution, restart, clarification, help/pause and the hidden-intro transition. It also checks the portrait frame, narrow-viewport overflow and the absence of paid endpoint calls. A successful local production-preview result is recorded above; public-host verification remains a publishing checkpoint.
 
-The automated Chrome launch was attempted again for the integration milestone, but the execution sandbox terminated the browser with `SIGABRT` and reported an `EPERM` process error before a page could load. No screenshot or browser performance measurement was produced. Desktop Edge is not installed in this environment. Chrome/Edge interaction, screenshot review and measured frame performance are therefore **not verified here**; the scripts above are supplied for a browser-capable environment. No unsupported claim of desktop browser verification is implied by passing the simulation tests.
+## Remaining verification
 
-## Manual checks after browser access is available
+- Complete the repair using a real microphone and configured Realtime service; confirm dialogue, tool execution, interruption, reconnect and reset.
+- When ElevenLabs is enabled, confirm streamed speech, fallback behavior and immediate silence on interruption.
+- Verify the deployed server routes with server-side credentials before claiming hosted voice works. Local Vite middleware alone does not establish a production backend.
+- Check actual mobile devices, Safari and Edge, including microphone permission denial, on-screen keyboard behavior and WebGL availability.
+- Recheck phone placement/retrieval, action framing, water and terminal overlays in the rendered app after presentation changes.
 
-- The call opens on the front camera showing Grandma; the rear camera shows the leaking pipe and dripping shower and shares the phone position.
-- Set phone on shelf, walk away and turn: camera stays fixed. Retrieve only within reach.
-- Apply-patch/clamp preset shows Grandma moving and bending while the phone stays on shelf.
-- Inspect tool visibility, interaction framing, water plane and terminal overlays at 1440×1100 and 390×844.
-- Confirm typed instructions and the voice adapter can both drive the singleton through `gameCommands`.
-- Repeat voice-driven actions in Chrome and Edge after the teammate connects audio; credentials, microphone and Fish services are outside this validation scope.
-
-Placeholder simplifications: no occlusion-aware perception, no general pathfinding, no character collision with the decorative trolley/shelf, no final animation clips or audio. Room bounds and the toilet are collision checked. No saved game, backend, or network synchronization is needed for this single-session demo.
+The current scene has no occlusion-aware perception or general pathfinding. Room boundaries, the tool table and toilet have collision checks. The single-session game does not require saved games or multiplayer synchronization. No public deployment has been verified in this validation record.

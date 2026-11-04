@@ -61,7 +61,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 .objectives li::before { content: "•"; position: absolute; left: 0; color: #ffd23f; font-weight: 700; }
 
 .call-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #2d403866; backdrop-filter: blur(4px); padding: 20px; z-index: 5; }
-.call-card { background: var(--card); color: #273b31; padding: 29px 28px; width: 320px; max-width: 100%; border-radius: 14px; text-align: center; box-shadow: 0 6px 22px #26392e40; }
+.call-card { background: var(--card); color: #273b31; padding: 29px 28px; width: 320px; max-width: 100%; max-height: 100%; overflow-y: auto; border-radius: 14px; text-align: center; box-shadow: 0 6px 22px #26392e40; }
 .call-card h2 { font: 400 32px/1.12 Georgia, serif; letter-spacing: -1px; margin: 17px 0; }
 .call-card p { color: #7b8471; font-size: 12px; line-height: 1.7; margin: 0 0 23px; }
 .call-card .primary { width: 100%; }
@@ -78,7 +78,12 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 .progress > i { display: block; height: 100%; background: var(--accent); }
 .mic { align-self: center; width: 56px; height: 56px; padding: 0; border-radius: 50%; display: grid; place-items: center; border: 1px solid #ffffff2a; background: #ffffff1a; color: var(--ink); margin: 2px 0; }
 .mic:disabled { opacity: .5; }
-.composer { display: flex; }
+.composer { display: flex; gap: 8px; }
+.composer-send { border-radius: 22px; justify-content: center; padding: 9px 14px; flex-shrink: 0; }
+.connection-note { margin: 0; text-align: center; color: var(--ink-dim); font-size: 11px; line-height: 1.5; }
+.call-help { position: absolute; top: 14px; left: 14px; border: 1px solid #ffffff2a; border-radius: 10px; background: var(--glass); color: var(--ink); font-size: 12px; backdrop-filter: blur(6px); }
+.call-help:hover:not(:disabled) { background: var(--glass-strong); }
+.help-rules { margin: 0 0 23px; padding-left: 18px; text-align: left; font-size: 12px; line-height: 1.7; display: grid; gap: 8px; }
 .composer input { flex: 1; min-width: 0; height: 44px; border-radius: 22px; border: 1px solid #ffffff2a; background: #ffffff1a; color: var(--ink); padding: 0 16px; font-size: 14px; }
 .composer input::placeholder { color: #ffffff88; }
 .composer input:disabled { opacity: .5; }
@@ -89,8 +94,10 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 .bubbles i { position: absolute; bottom: -120px; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #ffffffd9, #ffffff55 55%, #ffffff22 70%); border: 3px solid #ffffffaa; animation: bubble-rise 11s linear infinite; }
 @keyframes bubble-rise { to { transform: translateY(-115vh) translateX(20px); } }
 .start-card { position: relative; text-align: center; display: grid; gap: 30px; justify-items: center; }
+.demo-caption { margin: 0; color: #3b2a4a; font-size: 16px; line-height: 1.6; }
+.demo-caption span { font-size: 13px; }
 .start-title { margin: 0; transform: rotate(-3deg); }
-.start-title img { display: block; width: min(94vw, 640px); height: auto; filter: drop-shadow(0 10px 0 #3b2a4a66) drop-shadow(0 18px 30px #1b3a6a55); }
+.start-title img { display: block; width: min(94vw, 640px, 72dvh); height: auto; filter: drop-shadow(0 10px 0 #3b2a4a66) drop-shadow(0 18px 30px #1b3a6a55); }
 .start-button { font-family: "Google Sans", inherit; font-weight: 700; font-size: clamp(28px, 4vw, 42px); color: #3b2a4a; background: linear-gradient(#ffe36e, #ffc81f); border: 5px solid #3b2a4a; border-radius: 999px; padding: 14px 72px; box-shadow: 0 9px 0 #3b2a4a, inset 0 -6px 0 #e8a800, inset 0 4px 0 #fff4b8; transition: transform .12s, box-shadow .12s; animation: wiggle 2.4s ease-in-out infinite; }
 .start-button:hover:not(:disabled) { background: linear-gradient(#fff0a0, #ffd23f); transform: translateY(-3px) scale(1.04); box-shadow: 0 12px 0 #3b2a4a, inset 0 -6px 0 #e8a800, inset 0 4px 0 #fff4b8; }
 .start-button:active { transform: translateY(6px); box-shadow: 0 3px 0 #3b2a4a, inset 0 -6px 0 #e8a800; }
