@@ -1,5 +1,11 @@
 Asset provenance
 
+Filename: iphone-ringtone.mp3
+Title: Incoming phone-call ringtone
+Source: existing project asset, introduced in repository commit 4b77f16.
+Restored at Jeffrey's explicit request on 2026-11-04 for the incoming-call screen.
+Author / license / original source URL: not recorded in the original repository.
+
 Filename: buant-two-step.mp3
 Title: Buant Two-Step
 Supplied by: the project owner (gibumkang) on 2026-10-07 for the title screen.

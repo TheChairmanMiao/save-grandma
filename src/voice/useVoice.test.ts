@@ -25,7 +25,7 @@ const harness = vi.hoisted(() => {
     interrupt = vi.fn();
     sendMessage = vi.fn((text: string) => { this.transport.sendEvent({ type: 'conversation.item.create', text }); this.transport.requestResponse(); });
     connect = vi.fn(() => state.connectionResults.shift() ?? Promise.resolve());
-    constructor(_agent: unknown, public options: { transport: Transport; config: { outputModalities: string[]; audio: { input: { turnDetection: { createResponse: boolean; interruptResponse: boolean } }; output: { voice: string } } } }) { super(); this.transport = options.transport; state.sessions.push(this); }
+    constructor(_agent: unknown, public options: { transport: Transport; config: { outputModalities: string[]; reasoning: { effort: string }; audio: { input: { turnDetection: { createResponse: boolean; interruptResponse: boolean } }; output: { voice: string } } } }) { super(); this.transport = options.transport; state.sessions.push(this); }
   }
   class Context {
     state = 'suspended';
@@ -120,6 +120,7 @@ describe('voice connection lifecycle without network or microphone access', () =
     expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
     const s = harness.sessions[0];
     expect(s.options.config.outputModalities).toEqual(['audio']);
+    expect(s.options.config.reasoning).toEqual({ effort: 'low' });
     expect(s.options.config.audio.input.turnDetection).toMatchObject({ createResponse: false, interruptResponse: false });
     expect(s.transport.sender.track).toBe(harness.contexts[0].track);
     expect(s.transport.sender.track?.enabled).toBe(false);
@@ -139,7 +140,7 @@ describe('voice connection lifecycle without network or microphone access', () =
     await voice.connect({ microphone: false });
     const s = harness.sessions[0];
     expect(voice.sendText('  turn off selfie mode  ')).toBe(true);
-    expect(s.interrupt).toHaveBeenCalledOnce();
+    expect(s.interrupt).not.toHaveBeenCalled();
     expect(s.sendMessage).toHaveBeenCalledExactlyOnceWith('turn off selfie mode');
     expect(s.transport.sendEvent.mock.calls.filter(([event]) => event.type === 'response.create')).toHaveLength(1);
     expect(harness.values[8]).toBe(true);
@@ -184,6 +185,104 @@ describe('voice connection lifecycle without network or microphone access', () =
     expect(s.transport.sendEvent).not.toHaveBeenCalled();
   });
 
+  it('keeps a new typed response connected through a recoverable cancellation error', async () => {
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0];
+    s.emit('transport_event', { type: 'response.created', response: { id: 'old' } });
+    s.emit('transport_event', { type: 'output_audio_buffer.started', response_id: 'old' });
+    expect(voice.sendText('Turn off selfie mode.')).toBe(true);
+    expect(s.interrupt).toHaveBeenCalledOnce();
+    s.emit('error', { type: 'error', error: { type: 'error', error: { type: 'invalid_request_error', code: 'response_cancel_not_active', message: 'private provider detail' } } });
+    expect(harness.values[0]).toBe('connected');
+    expect(harness.values[1]).toBe('');
+    expect(harness.values[8]).toBe(true);
+    expect(s.close).not.toHaveBeenCalled();
+    s.emit('transport_event', { type: 'response.created', response: { id: 'new' } });
+    s.emit('transport_event', { type: 'output_audio_buffer.started', response_id: 'new' });
+    // Old response completion and audio-generation callbacks cannot hide this playback.
+    s.emit('transport_event', { type: 'response.done', response: { id: 'old', status: 'cancelled' } });
+    s.emit('transport_event', { type: 'output_audio_buffer.cleared', response_id: 'old' });
+    s.emit('audio_stopped'); s.emit('audio_interrupted');
+    expect(harness.values[8]).toBe(true);
+    expect(harness.values[4]).toBe(true);
+    s.emit('transport_event', { type: 'response.done', response: { id: 'new', status: 'completed' } });
+    expect(harness.values[8]).toBe(false);
+    expect(harness.values[4]).toBe(true);
+    s.emit('transport_event', { type: 'output_audio_buffer.stopped', response_id: 'new' });
+    expect(harness.values[4]).toBe(false);
+    expect(s.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it('clears an already-requested reply before queuing the next typed message without a timer', async () => {
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0];
+    voice.greet();
+    // The greeting request is in flight; response.created has not arrived yet.
+    expect(voice.sendText('Skip that, turn around.')).toBe(true);
+    expect(s.interrupt).toHaveBeenCalledOnce();
+    expect(s.interrupt.mock.invocationCallOrder[0]).toBeLessThan(s.sendMessage.mock.invocationCallOrder[0]);
+    expect(s.sendMessage).toHaveBeenCalledExactlyOnceWith('Skip that, turn around.');
+    expect(harness.values[8]).toBe(true);
+  });
+
+  it.each(['preamble', 'tool-result'])('drains continuous tool-result audio when its final stop names %s', async finalId => {
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0];
+    voice.sendText('Tell me what you see.');
+    s.emit('transport_event', { type: 'response.created', response: { id: 'preamble' } });
+    s.emit('transport_event', { type: 'output_audio_buffer.started', response_id: 'preamble' });
+    s.emit('transport_event', { type: 'response.output_audio.done', response_id: 'preamble' });
+    s.emit('transport_event', { type: 'response.done', response: { id: 'preamble', status: 'completed' } });
+    s.emit('transport_event', { type: 'response.created', response: { id: 'tool-result' } });
+    // A continuation can extend the same server buffer without another started event.
+    s.emit('transport_event', { type: 'response.output_audio.done', response_id: 'tool-result' });
+    s.emit('transport_event', { type: 'response.done', response: { id: 'tool-result', status: 'completed' } });
+    expect(harness.values[8]).toBe(false);
+    expect(harness.values[4]).toBe(true);
+    s.emit('transport_event', { type: 'output_audio_buffer.stopped', response_id: finalId });
+    expect(harness.values[4]).toBe(false);
+  });
+
+  it('keeps an interrupted continuous buffer from clearing newer playback', async () => {
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0];
+    s.emit('transport_event', { type: 'output_audio_buffer.started', response_id: 'preamble' });
+    s.emit('transport_event', { type: 'response.output_audio.done', response_id: 'tool-result' });
+    voice.sendText('Stop looking and turn around.');
+    s.emit('transport_event', { type: 'response.created', response: { id: 'new' } });
+    s.emit('transport_event', { type: 'output_audio_buffer.started', response_id: 'new' });
+    s.emit('transport_event', { type: 'response.output_audio.done', response_id: 'tool-result' });
+    s.emit('transport_event', { type: 'output_audio_buffer.cleared', response_id: 'tool-result' });
+    s.emit('transport_event', { type: 'output_audio_buffer.stopped', response_id: 'preamble' });
+    expect(harness.values[4]).toBe(true);
+    s.emit('transport_event', { type: 'output_audio_buffer.stopped', response_id: 'new' });
+    expect(harness.values[4]).toBe(false);
+  });
+
+  it('keeps recoverable response and SDK tool errors local to the current message', async () => {
+    const voice = useVoice();
+    await voice.connect({ microphone: false });
+    const s = harness.sessions[0];
+    voice.sendText('Look around.');
+    s.emit('error', { type: 'error', error: { type: 'error', error: { type: 'invalid_request_error', code: 'invalid_event', message: 'private provider detail' } } });
+    expect(harness.values[0]).toBe('connected');
+    expect(harness.values[8]).toBe(false);
+    expect(harness.values[1]).toBe('Grandma missed that message. Please try again.');
+    expect(s.close).not.toHaveBeenCalled();
+    voice.sendText('Try looking again.');
+    expect(harness.values[1]).toBe('');
+    s.emit('transport_event', { type: 'response.created', response: { id: 'retry' } });
+    s.emit('transport_event', { type: 'response.done', response: { id: 'retry', status: 'failed' } });
+    expect(harness.values[8]).toBe(false);
+    expect(harness.values[0]).toBe('connected');
+    s.emit('error', { type: 'error', error: new Error('a tool failed') });
+    expect(s.close).not.toHaveBeenCalled();
+  });
+
   it('enables and disables the microphone by swapping tracks in the same conversation', async () => {
     const mic = stream();
     vi.mocked(navigator.mediaDevices.getUserMedia).mockResolvedValue(mic.value);
@@ -191,11 +290,13 @@ describe('voice connection lifecycle without network or microphone access', () =
     await voice.connect({ microphone: false });
     const s = harness.sessions[0]; const context = harness.contexts[0];
     expect(await voice.setMicrophoneEnabled(true)).toBe(true);
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     expect(s.transport.sender.track).toBe(mic.track);
     expect(mic.track.enabled).toBe(true);
     expect(harness.values[9]).toBe(true);
     expect(s.transport.updateSessionConfig).toHaveBeenLastCalledWith(expect.objectContaining({
       outputModalities: ['audio'],
+      reasoning: { effort: 'low' },
       audio: expect.objectContaining({
         input: expect.objectContaining({
           transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' },
@@ -209,6 +310,7 @@ describe('voice connection lifecycle without network or microphone access', () =
     expect(mic.stop).toHaveBeenCalledOnce();
     expect(harness.values[9]).toBe(false);
     expect(s.transport.updateSessionConfig).toHaveBeenLastCalledWith(expect.objectContaining({ audio: expect.objectContaining({ input: expect.objectContaining({ turnDetection: expect.objectContaining({ createResponse: false, interruptResponse: false }) }) }) }));
+    expect(s.transport.updateSessionConfig.mock.calls.every(([config]) => config.reasoning?.effort === 'low')).toBe(true);
     expect(harness.sessions).toHaveLength(1);
     expect(s.close).not.toHaveBeenCalled();
     expect(voice.sendText('Keep talking.')).toBe(true);
@@ -389,13 +491,13 @@ describe('voice connection lifecycle without network or microphone access', () =
     expect(harness.values[0]).toBe('connected');
   });
 
-  it('tears down provider errors and ignores old-session callbacks after retry', async () => {
+  it('tears down expired sessions and ignores old-session callbacks after retry', async () => {
     const oldStream = stream(); const newStream = stream();
     vi.mocked(navigator.mediaDevices.getUserMedia).mockResolvedValueOnce(oldStream.value).mockResolvedValueOnce(newStream.value);
     const voice = useVoice();
     await voice.connect();
     const oldSession = harness.sessions[0];
-    oldSession.emit('error', { type: 'error', error: new Error('provider failure') });
+    oldSession.emit('error', { type: 'error', error: { type: 'error', error: { code: 'session_expired' } } });
     expect(oldStream.stop).toHaveBeenCalledOnce();
     expect(oldSession.close).toHaveBeenCalledOnce();
     expect(harness.values[0]).toBe('error');
@@ -451,7 +553,7 @@ describe('voice connection lifecycle without network or microphone access', () =
     const voice = useVoice();
     await voice.connect();
     const s = harness.sessions[0];
-    s.emit('audio_start');
+    s.emit('transport_event', { type: 'output_audio_buffer.started', response_id: 'speaking' });
     expect(harness.values[4]).toBe(true);
     voice.hush();
     expect(harness.stopSpeaking).toHaveBeenCalled();
@@ -466,12 +568,11 @@ describe('voice connection lifecycle without network or microphone access', () =
     voice.setOutputMuted(false);
     await voice.connect();
     const s = harness.sessions[0];
-    s.emit('audio_start');
+    s.emit('transport_event', { type: 'output_audio_buffer.started', response_id: 'speaking' });
     voice.setOutputMuted(true);
     expect(harness.stopSpeaking).toHaveBeenCalledOnce();
     expect(harness.values[4]).toBe(false);
     voice.setOutputMuted(false);
-    s.emit('audio_start');
     expect(harness.values[4]).toBe(true);
   });
 

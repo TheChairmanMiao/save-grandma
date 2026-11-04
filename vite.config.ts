@@ -13,7 +13,7 @@ function realtimeToken(apiKey: string | undefined): Plugin {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ session: {
-          type: 'realtime', model: REALTIME_MODEL,
+          type: 'realtime', model: REALTIME_MODEL, reasoning: { effort: 'low' },
           // Remain silent before the SDK applies the character and the player answers.
           audio: { input: { turn_detection: { type: 'semantic_vad', create_response: false, interrupt_response: false } } },
         } }),

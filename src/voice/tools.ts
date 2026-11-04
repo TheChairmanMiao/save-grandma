@@ -6,8 +6,13 @@ const RESULT_TIMEOUT_MS = 30_000;
 
 /** What Grandma knows right now, in plain words. No IDs, so the model can't sidestep ambiguity. */
 export function describe(o: Observation) {
+  const visible = (objects: Observation['surroundings']) => objects.filter(s => s.visible).map(s => `${s.name} (${s.color}, ${s.distance} m${s.reachable ? ', within reach' : ''})`);
   return {
-    sees: o.surroundings.map(s => `${s.name} (${s.color}, ${s.distance} m${s.reachable ? ', within reach' : ''})`),
+    sees: visible(o.surroundings),
+    callerSees: {
+      objects: visible(o.cameraView.surroundings),
+      grandma: o.cameraView.grandmaVisible ? 'Grandma is in the phone picture' : 'Grandma is outside the phone picture',
+    },
     holding: o.grandma.heldItems.length ? o.grandma.heldItems : 'nothing but the phone',
     posture: o.grandma.posture,
     phone: o.phone.placement === 'hand' ? `in her hand, ${o.phone.mode === 'selfie' ? 'front' : 'back'} camera on` : `on the dry shelf, ${o.phone.mode === 'selfie' ? 'front' : 'back'} camera on`,

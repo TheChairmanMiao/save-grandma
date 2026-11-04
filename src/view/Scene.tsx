@@ -1,8 +1,8 @@
-import { Component, useRef, type ReactNode } from 'react';
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Group } from 'three';
+import { Group, PerspectiveCamera } from 'three';
 import { SCENE_VISUALS } from '../creative/visuals';
-import { getSceneFrame, type SceneFrame } from './presentation';
+import { getSceneFrame, stepSceneMotion, type SceneFrame, type SceneMotion } from './presentation';
 import { radians, TUNING } from '../game/config';
 import type { WorldState } from '../game/controller';
 import type { ItemId } from '../game/types';
@@ -30,8 +30,7 @@ function Grandma({ world, frame }: { world: WorldState; frame: SceneFrame }) {
   const leftLeg = useRef<Group>(null);
   const rightLeg = useRef<Group>(null);
   useFrame(() => {
-    const active = world.active;
-    const walk = active?.to ? Math.sin(world.elapsed * 9) * 0.2 : 0;
+    const walk = Math.sin(frame.character.motion.phase) * frame.character.motion.weight * 0.2;
     if (leftLeg.current) leftLeg.current.rotation.x = walk;
     if (rightLeg.current) rightLeg.current.rotation.x = -walk;
     if (model.current) {
@@ -40,7 +39,7 @@ function Grandma({ world, frame }: { world: WorldState; frame: SceneFrame }) {
       model.current.position.y = -bend * 0.22;
     }
   });
-  return <group name="grandma_root" position={[world.grandma.position.x, 0, world.grandma.position.z]} rotation={[0, radians(frame.character.yaw), 0]}>
+  return <group>
     <group ref={leftLeg} position={[-0.12, 0.43, 0]}><Box position={[0, -0.2, 0]} size={[0.13, 0.42, 0.14]} color="#647069" /><Box position={[0, -0.4, 0.04]} size={[0.16, 0.09, 0.25]} color="#4a524b" /></group>
     <group ref={rightLeg} position={[0.12, 0.43, 0]}><Box position={[0, -0.2, 0]} size={[0.13, 0.42, 0.14]} color="#647069" /><Box position={[0, -0.4, 0.04]} size={[0.16, 0.09, 0.25]} color="#4a524b" /></group>
     <group ref={model}>
@@ -59,15 +58,36 @@ function Grandma({ world, frame }: { world: WorldState; frame: SceneFrame }) {
   </group>;
 }
 
-function PhoneCamera({ frame }: { frame: SceneFrame }) {
-  useFrame(({ camera }) => {
-    camera.position.set(...frame.phone.position);
-    camera.lookAt(...frame.phone.target);
-  });
-  return null;
+function CharacterAndCamera({ world, frame, reducedMotion }: { world: WorldState; frame: SceneFrame; reducedMotion: boolean }) {
+  const root = useRef<Group>(null);
+  const motion = useRef<SceneMotion | null>(null);
+  // This render-only contract is shared by the procedural model and the lens.
+  const shown: SceneFrame = { ...frame, character: { ...frame.character } };
+  useFrame(({ camera }, delta) => {
+    const next = stepSceneMotion(motion.current, frame, delta, reducedMotion);
+    motion.current = next;
+    shown.time = next.time;
+    shown.character.bend = next.character.bend;
+    shown.character.look = next.character.look;
+    shown.character.motion = { ...next.gait, reducedMotion };
+    if (root.current) {
+      root.current.position.set(...next.character.position);
+      root.current.rotation.y = radians(next.character.yaw);
+    }
+    camera.position.set(...next.phone.position);
+    // Yaw/pitch describe the physical lens. No look-at target can recenter it mid-step.
+    camera.rotation.set(radians(next.phone.pitch), radians(next.phone.yaw) + Math.PI, radians(next.phone.roll), 'YXZ');
+    if (camera instanceof PerspectiveCamera && camera.fov !== next.phone.verticalFov) {
+      camera.fov = next.phone.verticalFov;
+      camera.updateProjectionMatrix();
+    }
+  }, -1);
+  return <group ref={root} name="grandma_root" position={frame.character.position} rotation={[0, radians(frame.character.yaw), 0]}>
+    {SCENE_VISUALS.Grandma ? <SCENE_VISUALS.Grandma frame={shown} /> : <Grandma world={world} frame={shown} />}
+  </group>;
 }
 
-function Bathroom({ world }: { world: WorldState }) {
+function Bathroom({ world, reducedMotion }: { world: WorldState; reducedMotion: boolean }) {
   const frame = getSceneFrame(world);
   return <>
     <color attach="background" args={['#d8e3d8']} />
@@ -104,10 +124,7 @@ function Bathroom({ world }: { world: WorldState }) {
     {world.towelUsed && <group position={[-1.55, 0.04, 4]}><Tool id="towels" /></group>}
     {world.bucketUsed && <group position={[-1.3, 0.2, 4.55]}><Tool id="bucket" /></group>}
     {world.water > 0 && <mesh position={[0, 0.015 + world.water / TUNING.floodThreshold * 0.3, 2.75]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[5.95, 6.4]} /><meshStandardMaterial color="#5ea8be" transparent opacity={0.22 + world.water / 250} roughness={0.2} depthWrite={false} /></mesh>}
-    {SCENE_VISUALS.Grandma
-      ? <group name="grandma_root" position={frame.character.position} rotation={[0, radians(frame.character.yaw), 0]}><SCENE_VISUALS.Grandma frame={frame} /></group>
-      : <Grandma world={world} frame={frame} />}
-    <PhoneCamera frame={frame} />
+    <CharacterAndCamera world={world} frame={frame} reducedMotion={reducedMotion} />
   </>;
 }
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -116,5 +133,13 @@ class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean
   render() { return this.state.failed ? <div className="scene-fallback">The 3D camera needs WebGL. Enable hardware acceleration and reload. The simulation and developer controls are still available.</div> : this.props.children; }
 }
 export default function Scene({ world }: { world: WorldState }) {
-  return <SceneBoundary><Canvas shadows dpr={[1, 1.5]} camera={{ fov: 88, near: 0.035, far: 30 }} gl={{ antialias: true }} fallback={<div className="scene-fallback">WebGL unavailable. The simulation remains available in the developer panel.</div>}><Bathroom world={world} /></Canvas></SceneBoundary>;
+  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(preference.matches);
+    preference.addEventListener('change', update);
+    update();
+    return () => preference.removeEventListener('change', update);
+  }, []);
+  return <SceneBoundary><Canvas shadows dpr={[1, 1.5]} camera={{ fov: 88, near: 0.035, far: 30 }} gl={{ antialias: true }} fallback={<div className="scene-fallback">WebGL unavailable. The simulation remains available in the developer panel.</div>}><Bathroom world={world} reducedMotion={reducedMotion} /></Canvas></SceneBoundary>;
 }

@@ -3,7 +3,7 @@ import grandmaImage from '../../public/images/grandma-profile.png';
 import { speak } from '../voice/grandma-voice';
 import { GRANDMA_GREETING } from '../voice/persona';
 import type { VoiceStatus } from '../voice/useVoice';
-import { playDemoSound } from './demo-audio';
+import { playIncomingCallRingtone } from './incoming-call';
 
 /** Scripted fallback used only when the realtime voice agent is unavailable. */
 export const GREETING = GRANDMA_GREETING;
@@ -38,12 +38,14 @@ export default function Intro({ voice, onGreeting, onDone, onFinished }: { voice
   const [gaveUpWaiting, setGaveUpWaiting] = useState(false);
   const live = useRef(false);
   const hasSpoken = useRef(false);
+  const ringtone = useRef<ReturnType<typeof playIncomingCallRingtone> | null>(null);
 
-  // Original two-tone ringtone; no third-party recording is loaded.
+  // Ring until Answer, independently of the AI connection finishing.
   useEffect(() => {
     if (answered) return;
-    const ring = playDemoSound('ringtone', 0.8);
-    return ring.stop;
+    const ring = playIncomingCallRingtone();
+    ringtone.current = ring;
+    return () => { ring.stop(); if (ringtone.current === ring) ringtone.current = null; };
   }, [answered]);
   useEffect(() => {
     if (!answered) return;
@@ -85,7 +87,7 @@ export default function Intro({ voice, onGreeting, onDone, onFinished }: { voice
     <div className="caller-avatar" aria-hidden="true"><img src={grandmaImage} alt="" width={1254} height={1254} /></div>
     <h2>Granny</h2>
     <p>{answered ? 'Connecting…' : 'incoming call'}</p>
-    <button type="button" className="answer-button" onClick={() => setAnswered(true)} disabled={answered} aria-label="Answer the call">
+    <button type="button" className="answer-button" onClick={() => { ringtone.current?.stop(); setAnswered(true); }} disabled={answered} aria-label="Answer the call">
       <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8z" /></svg>
       <span>Answer</span>
     </button>

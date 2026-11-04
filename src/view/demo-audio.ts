@@ -1,6 +1,6 @@
 /**
  * Original, procedural demo sounds. These use oscillators and generated noise only;
- * none of the recordings in public/audio are loaded by the playable demo.
+ * The incoming-call ring is handled separately by incoming-call.ts.
  */
 export type DemoSound = 'title' | 'water' | 'alarm' | 'ringtone';
 export type DemoAudio = { stop: () => void };

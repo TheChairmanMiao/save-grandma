@@ -26,11 +26,15 @@ export type ActionRequest = { runId: string; action: Action; unresolved?: string
 export type ReasonCode = 'OK' | 'INVALID_REQUEST' | 'STALE_RUN' | 'NOT_RUNNING' | 'QUEUE_FULL' | 'CLARIFICATION_NEEDED' | 'OUT_OF_REACH' | 'WRONG_POSTURE' | 'HANDS_FULL' | 'MISSING_TOOL' | 'NOT_FOUND' | 'PHONE_NOT_HELD' | 'INVALID_TARGET' | 'BLOCKED' | 'ALREADY_DONE' | 'CANCELLED' | 'LEAK_WORSENED' | 'TERMINAL';
 export type Result = { actionId: string; runId: string; status: 'completed' | 'failed' | 'clarification_needed' | 'cancelled'; code: ReasonCode; message: string; targetId?: ObjectId; candidates?: ObjectId[] };
 export type Acceptance = { accepted: boolean; actionId: string; runId: string; code: ReasonCode; message: string };
+export type PerceivedObject = { id: ObjectId; name: string; color: string; distance: number; reachable: boolean; visible: boolean };
 export type Observation = {
   runId: string; stage: Stage; elapsedSeconds: number;
   grandma: { position: Vec2; facingDegrees: number; posture: 'standing' | 'bent'; heldItems: ItemId[] };
   phone: { mode: 'selfie' | 'rear'; placement: 'hand' | 'dry_spot' };
-  surroundings: { id: ObjectId; name: string; color: string; distance: number; reachable: boolean; visible: boolean }[];
+  /** Objects Grandma can see with her eyes, independent of the selected phone lens. */
+  surroundings: PerceivedObject[];
+  /** What actually falls inside the phone lens; a selfie need not show the room. */
+  cameraView: { surroundings: PerceivedObject[]; grandmaVisible: boolean; facingDegrees: number; pitchDegrees: number };
   waterBand: Band; stressBand: Band; leak: 'flowing' | 'stopped';
   currentAction: { actionId: string; type: Action['type']; progress: number } | null;
   queuedActions: number;
@@ -47,5 +51,7 @@ export interface GameController {
   submitAction(request: ActionRequest): Acceptance;
   cancelActions(): void;
   subscribe(listener: (event: GameEvent) => void): () => void;
+  /** The renderer reports its actual viewport ratio; this changes framing, never game rules. */
+  setCameraAspect(aspect: number): void;
   start(): void; pause(): void; resume(): void; reset(options?: { seed?: number }): void;
 }

@@ -11,9 +11,11 @@ const CONNECT_TIMEOUT_MS = 20_000;
 const TOKEN_TIMEOUT_MS = 8_000;
 // Closes ordinary abandoned calls. This client timer is not an enforceable spending cap.
 const MAX_SESSION_MS = 6 * 60_000;
+const MICROPHONE_CONSTRAINTS = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
 
 const audioSettings = (automaticInput: boolean) => ({
   input: {
+    noiseReduction: { type: 'near_field' as const },
     transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' },
     turnDetection: { type: 'semantic_vad' as const, eagerness: 'high' as const, createResponse: automaticInput, interruptResponse: automaticInput },
   },
@@ -51,6 +53,16 @@ function lastMessage(history: RealtimeItem[], role: 'user' | 'assistant'): Voice
 }
 const stopStream = (stream: MediaStream | null) => stream?.getTracks().forEach(track => track.stop());
 
+// SDK errors wrap the provider's error event. Do not expose its raw message to players.
+function providerErrorCode(value: unknown): string | null {
+  for (let depth = 0; depth < 4 && value && typeof value === 'object'; depth++) {
+    const error = value as { code?: unknown; error?: unknown };
+    if (typeof error.code === 'string') return error.code;
+    value = error.error;
+  }
+  return null;
+}
+
 type Attempt = {
   generation: number;
   abort: AbortController;
@@ -67,6 +79,10 @@ type Attempt = {
   microphoneRequest: Promise<boolean> | null;
   microphoneTarget: boolean;
   awaitingResponse: boolean;
+  responseId: string | null;
+  playbackResponseId: string | null;
+  playbackResponses: Set<string>;
+  interruptedResponses: Set<string>;
   automaticInputEnabled: boolean | null;
   timer: ReturnType<typeof setTimeout> | null;
   tokenTimer: ReturnType<typeof setTimeout> | null;
@@ -78,7 +94,7 @@ function syncAudioInput(attempt: Attempt, appMuted: boolean) {
   const enabled = attempt.microphoneEnabled && !appMuted;
   // The installed transport fills omitted audio fields with defaults, so preserve the full audio configuration.
   if (attempt.automaticInputEnabled !== enabled) {
-    attempt.transport.updateSessionConfig({ outputModalities: ['audio'], audio: audioSettings(enabled) });
+    attempt.transport.updateSessionConfig({ outputModalities: ['audio'], reasoning: { effort: 'low' }, audio: audioSettings(enabled) });
     attempt.automaticInputEnabled = enabled;
   }
   attempt.session.mute(!enabled);
@@ -178,7 +194,7 @@ export function useVoice() {
       if (enabled) {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone access needs HTTPS or localhost.');
         // Called immediately from the explicit mic-button click, never from typed input.
-        requested = navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        requested = navigator.mediaDevices.getUserMedia(MICROPHONE_CONSTRAINTS).then(stream => {
           if (!current()) stopStream(stream);
           return stream;
         });
@@ -237,6 +253,7 @@ export function useVoice() {
       microphoneStream: null, silentStream: null, context: null, session: null, transport: null, ready: false,
       microphoneEnabled: false, microphoneGeneration: 0, microphoneAbort: null, microphoneRequest: null,
       microphoneTarget: microphone, awaitingResponse: false, automaticInputEnabled: null, timer: null, tokenTimer: null,
+      responseId: null, playbackResponseId: null, playbackResponses: new Set(), interruptedResponses: new Set(),
     };
     active.current = attempt;
     setStatus('connecting');
@@ -267,7 +284,7 @@ export function useVoice() {
         if (microphone) {
           if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone access needs HTTPS or localhost. You can connect using typed chat.');
           setStatus('microphone');
-          const requestedStream = navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+          const requestedStream = navigator.mediaDevices.getUserMedia(MICROPHONE_CONSTRAINTS).then(stream => {
             if (!isCurrent(attempt)) stopStream(stream);
             return stream;
           });
@@ -289,6 +306,7 @@ export function useVoice() {
           transport, model: REALTIME_MODEL,
           config: {
             outputModalities: ['audio'],
+            reasoning: { effort: 'low' },
             audio: audioSettings(automaticInput),
           },
         });
@@ -308,13 +326,54 @@ export function useVoice() {
           const acceptsSpeech = attempt.microphoneEnabled && !mutedValue.current;
           if (event.type === 'input_audio_buffer.speech_started' && acceptsSpeech) setSpeechStarted(n => n + 1);
           if (event.type === 'input_audio_buffer.committed' && acceptsSpeech) { attempt.awaitingResponse = true; setResponding(true); setSpeechEnded(n => n + 1); }
-          if (event.type === 'response.created') { attempt.awaitingResponse = false; setResponding(true); }
-          if (event.type === 'response.done' && !attempt.awaitingResponse) setResponding(false);
+          const response = 'response' in event ? event.response as { id?: string; status?: string } | undefined : undefined;
+          if (event.type === 'response.created') {
+            attempt.responseId = response?.id ?? null;
+            attempt.awaitingResponse = false;
+            setError(''); setResponding(true);
+          }
+          if (event.type === 'response.done' && (!response?.id || response.id === attempt.responseId)) {
+            attempt.responseId = null;
+            if (!attempt.awaitingResponse) setResponding(false);
+            if (response?.status === 'failed') setError('Grandma missed that message. Please try again.');
+          }
+          // WebRTC plays a remote MediaStream, not the SDK's audio chunks. Generation can
+          // finish well before playback; only these response-scoped buffer events end speech.
+          const playbackId = 'response_id' in event && typeof event.response_id === 'string' ? event.response_id : null;
+          if (event.type === 'output_audio_buffer.started' && playbackId && !attempt.interruptedResponses.has(playbackId)) {
+            attempt.playbackResponseId = playbackId;
+            attempt.playbackResponses = new Set([playbackId]);
+            setSpeaking(!holdOutputMuted.current);
+          }
+          // A tool continuation can append audio without a second buffer.started event.
+          // The eventual drained event may name that continuation rather than the first response.
+          if (event.type === 'response.output_audio.done' && playbackId && attempt.playbackResponseId && !attempt.interruptedResponses.has(playbackId)) {
+            attempt.playbackResponseId = playbackId;
+            attempt.playbackResponses.add(playbackId);
+          }
+          if ((event.type === 'output_audio_buffer.stopped' || event.type === 'output_audio_buffer.cleared') && playbackId && attempt.playbackResponses.has(playbackId)) {
+            attempt.playbackResponseId = null; attempt.playbackResponses.clear(); setSpeaking(false);
+          }
         });
-        s.on('audio_start', () => { if (isCurrent(attempt)) setSpeaking(true); });
-        s.on('audio_stopped', () => { if (isCurrent(attempt)) setSpeaking(false); });
-        s.on('audio_interrupted', () => { if (isCurrent(attempt)) setSpeaking(false); });
-        s.on('error', () => failConnection(attempt, 'Grandma’s AI call was interrupted. Try connecting again.'));
+        s.on('error', event => {
+          if (!isCurrent(attempt)) return;
+          const code = providerErrorCode(event);
+          if (!attempt.ready || code === 'session_expired' || code === 'invalid_api_key' || code === 'authentication_error') {
+            failConnection(attempt, 'Grandma’s AI call disconnected. Try connecting again.');
+            return;
+          }
+          // Cancelling an already-finished response is explicitly recoverable. Tearing down
+          // here cuts off the next typed reply and unnecessarily spends another admission.
+          if (code === 'response_cancel_not_active') return;
+          if (code === 'conversation_already_has_active_response') {
+            attempt.awaitingResponse = false; setResponding(!!attempt.responseId);
+            return;
+          }
+          if (!attempt.responseId && !attempt.playbackResponseId) {
+            attempt.awaitingResponse = false; setResponding(false);
+          }
+          setError('Grandma missed that message. Please try again.');
+        });
         await abortable(s.connect({ apiKey: credentials.value, ...(credentials.relay ? { url: new URL('/api/realtime-call', window.location.origin).href } : {}) }), attempt.abort.signal);
         if (!isCurrent(attempt)) { s.close(); return; }
         if (attempt.timer) clearTimeout(attempt.timer);
@@ -346,8 +405,19 @@ export function useVoice() {
     const attempt = active.current;
     stopSpeaking(); setSpeaking(false); setResponding(false);
     if (attempt) {
+      const responsePending = attempt.awaitingResponse;
       attempt.awaitingResponse = false;
-      attempt.session?.interrupt();
+      const responseId = attempt.responseId;
+      const playbackId = attempt.playbackResponseId;
+      // interrupt() synchronously sends cancel + clear; the installed SDK sequences the next
+      // response behind that cancellation. An idle typed turn needs neither event.
+      if (responsePending || (responseId && !attempt.interruptedResponses.has(responseId)) || (playbackId && !attempt.interruptedResponses.has(playbackId))) {
+        attempt.session?.interrupt();
+        for (const id of [responseId, ...attempt.playbackResponses]) if (id) attempt.interruptedResponses.add(id);
+        while (attempt.interruptedResponses.size > 32) attempt.interruptedResponses.delete(attempt.interruptedResponses.values().next().value!);
+      }
+      attempt.playbackResponseId = null;
+      attempt.playbackResponses.clear();
       // Clear queued output through the SDK; do not hide the next response with a timed mute.
       attempt.audio.muted = holdOutputMuted.current;
     }
@@ -358,6 +428,7 @@ export function useVoice() {
     if (!trimmed || !attempt?.ready || !attempt.session) return false;
     try {
       hush();
+      setError('');
       attempt.awaitingResponse = true; setResponding(true);
       // sendMessage creates the user item AND requests one response. Do not call respond() too.
       attempt.session.sendMessage(trimmed);
@@ -379,6 +450,7 @@ export function useVoice() {
     const attempt = active.current;
     if (attempt) attempt.audio.muted = value;
     if (value && attempt?.session) { stopSpeaking(); setSpeaking(false); }
+    if (!value && attempt?.playbackResponseId) setSpeaking(true);
   }, []);
   const notify = useCallback((text: string) => { sendText(text); }, [sendText]);
   const sayLine = useCallback((text: string) => {

@@ -173,7 +173,7 @@ async function relay(request: Request, env: PublicApiEnv, db: DemoDatabase) {
   if (!control) return problem(409, 'SESSION_USED', 'This call reservation has expired or was already used. Start a new call.');
   const form = new FormData(); form.set('sdp', sdp);
   form.set('session', JSON.stringify({
-    type: 'realtime', model: REALTIME_MODEL, output_modalities: ['audio'],
+    type: 'realtime', model: REALTIME_MODEL, output_modalities: ['audio'], reasoning: { effort: 'low' },
     audio: {
       input: { transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' }, turn_detection: { type: 'semantic_vad', eagerness: 'high', create_response: false, interrupt_response: false } },
       output: { voice: GRANDMA_VOICE, speed: GRANDMA_SPEED },

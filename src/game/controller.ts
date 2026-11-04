@@ -1,14 +1,19 @@
-import { lensYaw, lookAngles, turnYaw } from './phone';
+import { DEFAULT_CAMERA_ASPECT, lensYaw, lookAngles, smoothProgress, turnYaw } from './phone';
+import { getPerception } from './perception';
 import { isActionRequest } from './action-contract';
 import { distance, ids, normalize, OBJECTS, radians, TOOLBOXES, TOOLS, TUNING } from './config';
 import type { Acceptance, Action, ActionRequest, Band, GameController, GameEvent, ItemId, ObjectId, Observation, ReasonCode, Result, Stage, Target, ToolboxId, ToolId, Vec2 } from './types';
 
 type Queued = { id: string; request: ActionRequest };
-type Active = Queued & { target?: ObjectId; elapsed: number; duration: number; from: Vec2; to?: Vec2 };
+type Active = Queued & {
+  target?: ObjectId; elapsed: number; duration: number; from: Vec2; to?: Vec2;
+  fromYaw: number; toYaw: number; turnDuration: number; moveDuration?: number;
+  fromPhoneYaw: number; toPhoneYaw: number; fromPhonePitch: number; toPhonePitch: number;
+};
 export type WorldState = {
   runId: string; seed: number; stage: Stage; elapsed: number; water: number; leakRate: number;
   grandma: { position: Vec2; yaw: number; posture: 'standing' | 'bent'; held: ItemId[] };
-  phone: { mode: 'selfie' | 'rear'; placement: 'hand' | 'dry_spot'; yaw: number; pitch: number; fixedYaw: number };
+  phone: { mode: 'selfie' | 'rear'; placement: 'hand' | 'dry_spot'; yaw: number; pitch: number; fixedYaw: number; aspect: number };
   items: Record<ItemId, { position: Vec2; height: number; location: 'toolbox' | 'world' | 'held' | 'used' }>;
   /** Which tool each toolbox hides; shuffled per seed so the player has to look. */
   toolboxes: Record<ToolboxId, { open: boolean; tool: ToolId }>;
@@ -35,6 +40,7 @@ export class Simulation implements GameController {
   constructor(seed = 7) { this.initialize(seed); }
 
   private initialize(seed: number) {
+    const cameraAspect = this.state?.phone.aspect ?? DEFAULT_CAMERA_ASPECT;
     this.randomState = seed >>> 0;
     this.remainder = 0;
     // Deal the three tools into the three toolboxes (seeded Fisher-Yates).
@@ -45,8 +51,8 @@ export class Simulation implements GameController {
     this.state = {
       runId: `run-${instanceId}-${++runCounter}`, seed, stage: 'ready', elapsed: 0, water: 0, leakRate: TUNING.initialLeakPerSecond,
       grandma: { position: { x: 0, z: 0.9 }, yaw: 0, posture: 'standing', held: [] },
-      // The call opens on the rear camera so the caller sees the flooding room, not Grandma's face.
-      phone: { mode: 'selfie', placement: 'hand', yaw: 0, pitch: 0, fixedYaw: 0 },
+      // The incoming call opens on Grandma's face; changing to the room lens is part of play.
+      phone: { mode: 'selfie', placement: 'hand', yaw: 0, pitch: 0, fixedYaw: 0, aspect: cameraAspect },
       items: Object.fromEntries(itemIds.map(id => {
         const tool = (TOOLS as ItemId[]).includes(id);
         const home = tool ? OBJECTS[boxOf(id as ToolId)].position : OBJECTS[id].position;
@@ -89,19 +95,11 @@ export class Simulation implements GameController {
 
   getObservation(): Observation {
     const s = this.state;
-    const surroundings = ids.filter(id => this.available(id)).map(id => {
-      const p = this.position(id);
-      const d = distance(s.grandma.position, p);
-      const angle = Math.atan2(p.x - s.grandma.position.x, p.z - s.grandma.position.z) * 180 / Math.PI;
-      // Grandma's perception, independent of which phone camera is selected.
-      const visible = Math.abs(normalize(angle - s.grandma.yaw - s.phone.yaw)) <= 70 || d < 0.6;
-      const name = isToolbox(id) ? `${OBJECTS[id].name} (${s.toolboxes[id].open ? 'open' : 'closed'})` : OBJECTS[id].name;
-      return { id, name, color: OBJECTS[id].color, distance: Math.round(d * 10) / 10, reachable: d <= TUNING.reach, visible };
-    }).filter(o => o.visible);
+    const perception = getPerception(s);
     return clone({
       runId: s.runId, stage: s.stage, elapsedSeconds: s.elapsed,
       grandma: { position: s.grandma.position, facingDegrees: s.grandma.yaw, posture: s.grandma.posture, heldItems: s.grandma.held },
-      phone: { mode: s.phone.mode, placement: s.phone.placement }, surroundings,
+      phone: { mode: s.phone.mode, placement: s.phone.placement }, ...perception,
       waterBand: this.band(), stressBand: this.band(), leak: s.leakRate > 0 ? 'flowing' : 'stopped',
       currentAction: s.active ? { actionId: s.active.id, type: s.active.request.action.type, progress: s.active.elapsed / s.active.duration } : null,
       queuedActions: s.queue.length,
@@ -111,6 +109,10 @@ export class Simulation implements GameController {
   /** Rendering/developer diagnostics only. Never send this to a conversational model. */
   readState(): WorldState { return clone(this.state); }
   subscribe(listener: (event: GameEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  setCameraAspect(aspect: number) {
+    if (!Number.isFinite(aspect) || aspect <= 0 || aspect > 10 || Math.abs(aspect - this.state.phone.aspect) < 1e-5) return;
+    this.state.phone.aspect = aspect; this.changed(); this.flush();
+  }
   start() { if (this.state.stage === 'ready') { this.state.stage = 'running'; this.changed(); this.flush(); } }
   pause() { if (this.state.stage === 'running') { this.state.stage = 'paused'; this.changed(); this.flush(); } }
   resume() { if (this.state.stage === 'paused') { this.state.stage = 'running'; this.changed(); this.flush(); } }
@@ -261,6 +263,10 @@ export class Simulation implements GameController {
     if (!error) error = this.check(a, target);
     let duration: number = TUNING.durations[a.type];
     const from = { ...this.state.grandma.position };
+    const fromYaw = this.state.grandma.yaw;
+    const fromPhoneYaw = this.state.phone.yaw, fromPhonePitch = this.state.phone.pitch;
+    let toYaw = fromYaw, toPhoneYaw = fromPhoneYaw, toPhonePitch = fromPhonePitch, turnDuration = 0;
+    let moveDuration: number | undefined;
     let to: Vec2 | undefined;
     if (!error && (a.type === 'move' || a.type === 'move_to')) {
       if (a.type === 'move_to' && target) {
@@ -274,13 +280,28 @@ export class Simulation implements GameController {
       }
       if (to) {
         if (!this.pathClear(from, to)) error = failure('BLOCKED', 'That path meets a wall or the toilet. Choose a shorter step or another direction.');
-        duration = Math.max(0.2, distance(from, to) / TUNING.moveSpeed);
+        moveDuration = Math.max(0.2, distance(from, to) / TUNING.moveSpeed);
+        if (a.type === 'move_to') {
+          // Face the destination before walking; explicit directional steps remain sidesteps/backsteps.
+          const p = target ? this.position(target) : to;
+          const heading = Math.atan2(p.x - from.x, p.z - from.z) * 180 / Math.PI;
+          if (distance(from, p) > 0.01) toYaw = fromYaw + normalize(heading - fromYaw);
+          turnDuration = Math.abs(toYaw - fromYaw) / 180 * TUNING.durations.turn;
+          toPhoneYaw = 0; toPhonePitch = 0;
+        }
+        duration = turnDuration + moveDuration;
       }
+    }
+    if (a.type === 'turn') {
+      const delta = normalize(turnYaw(this.state, a) - fromYaw);
+      toYaw = fromYaw + (Math.abs(delta) === 180 ? (a.direction === 'left' ? 180 : -180) : delta);
+      toPhoneYaw = 0;
+    } else if (a.type === 'look') {
+      const look = lookAngles(this.state, a); toPhoneYaw = fromPhoneYaw + normalize(look.yaw - fromPhoneYaw); toPhonePitch = look.pitch;
     }
     if (a.type === 'wait') duration = a.seconds;
     if (error) { this.result(q, error.code, error.message, target, error.candidates); return; }
-    this.state.active = { ...q, target, elapsed: 0, duration, from, to };
-    if (a.type === 'move_to' && to && distance(from, to) > 0.01) this.state.grandma.yaw = Math.atan2(to.x - from.x, to.z - from.z) * 180 / Math.PI;
+    this.state.active = { ...q, target, elapsed: 0, duration, from, to, fromYaw, toYaw, turnDuration, moveDuration, fromPhoneYaw, toPhoneYaw, fromPhonePitch, toPhonePitch };
     this.emit({ type: 'action_progress', runId: this.state.runId, actionId: q.id, action: a.type, progress: 0 });
   }
 
@@ -292,8 +313,8 @@ export class Simulation implements GameController {
     let message = `${a.type.replaceAll('_', ' ')} completed.`;
     let win = false;
     switch (a.type) {
-      case 'look': Object.assign(s.phone, lookAngles(s, a)); break;
-      case 'turn': s.grandma.yaw = turnYaw(s, a); s.phone.yaw = 0; break;
+      case 'look': s.phone.yaw = normalize(active.toPhoneYaw); s.phone.pitch = active.toPhonePitch; break;
+      case 'turn': s.grandma.yaw = normalize(active.toYaw); s.phone.yaw = 0; break;
       case 'switch_camera': s.phone.mode = a.mode; break;
       case 'place_phone':
         s.phone.placement = 'dry_spot';
@@ -359,7 +380,17 @@ export class Simulation implements GameController {
       if (s.active) {
         const active = s.active; active.elapsed = Math.min(active.duration, active.elapsed + dt);
         const progress = active.elapsed / active.duration;
-        if (active.to) s.grandma.position = { x: active.from.x + (active.to.x - active.from.x) * progress, z: active.from.z + (active.to.z - active.from.z) * progress };
+        const moving = active.to && active.moveDuration !== undefined;
+        const facingProgress = moving ? active.turnDuration ? smoothProgress(active.elapsed / active.turnDuration) : 1 : smoothProgress(progress);
+        const aimDuration = moving ? Math.max(active.turnDuration, Math.min(0.35, active.moveDuration!)) : active.duration;
+        const aimProgress = smoothProgress(active.elapsed / aimDuration);
+        s.grandma.yaw = normalize(active.fromYaw + (active.toYaw - active.fromYaw) * facingProgress);
+        s.phone.yaw = normalize(active.fromPhoneYaw + (active.toPhoneYaw - active.fromPhoneYaw) * aimProgress);
+        s.phone.pitch = active.fromPhonePitch + (active.toPhonePitch - active.fromPhonePitch) * aimProgress;
+        if (active.to) {
+          const travel = Math.max(0, Math.min(1, (active.elapsed - active.turnDuration) / active.moveDuration!));
+          s.grandma.position = { x: active.from.x + (active.to.x - active.from.x) * travel, z: active.from.z + (active.to.z - active.from.z) * travel };
+        }
         if (active.elapsed >= active.duration - 1e-9) { s.active = null; this.finish(active); }
       }
       // Let interruptions and result-driven sequences react before the next tick.
@@ -377,6 +408,7 @@ export function createGame(seed = 7) {
   const simulation = new Simulation(seed);
   const controller: GameController = Object.freeze({
     getObservation: () => simulation.getObservation(), submitAction: (request: ActionRequest) => simulation.submitAction(request),
+    setCameraAspect: (aspect: number) => simulation.setCameraAspect(aspect),
     cancelActions: () => simulation.cancelActions(), subscribe: (listener: (event: GameEvent) => void) => simulation.subscribe(listener),
     start: () => simulation.start(), pause: () => simulation.pause(), resume: () => simulation.resume(), reset: (options?: { seed?: number }) => simulation.reset(options),
   });

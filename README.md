@@ -2,7 +2,7 @@
 
 A playable bathroom emergency for the Fishathon team. The player sees through Grandma’s phone and talks her through stopping a leak. Realtime voice tools execute instructions in the simulation; typed instructions provide a fallback when voice is unavailable.
 
-The hosted build supports OpenAI speech with typed or microphone input, with a shared limit of 10 call starts per UTC day and one active call. Scripted offline play remains available when AI is busy or unavailable. It retains the existing visual direction and uses original procedural audio. See [demo setup and publishing](docs/DEMO.md).
+The hosted build supports OpenAI speech with typed or microphone input, with a shared limit of 10 call starts per UTC day and one active call. Scripted offline play remains available when AI is busy or unavailable. It retains the existing visual direction, uses procedural ambience, and restores the project's incoming iPhone ringtone. See [demo setup and publishing](docs/DEMO.md).
 
 ## Run locally
 
@@ -31,12 +31,14 @@ The call opens on the front camera. “Turn off selfie mode” selects the rear 
 - `BROWSER_CHANNEL=msedge npm run smoke` — the same tests in installed desktop Edge.
 - `npm run preview:offline` after `npm run build:offline`, then `SMOKE_URL=http://127.0.0.1:4173 SMOKE_PRODUCTION=1 npm run smoke` — the same scenarios against the offline build.
 - `LIVE_AUDITION=1 node scripts/audition.mjs` — opt-in paid local Realtime audition. Records native audio from typed input, checks camera/body actions and closes after at most 90 seconds. Requires the configured dev server; never points at a public host.
+- `LIVE_INTERACTION_CHECK=1 node scripts/interaction-check.mjs` — opt-in, bounded local check of typed speech playback, recoverable cancellation, interruption and the restored ring. Records sanitized events and timing in ignored `artifacts/interaction/`.
 
 There is no developer console anymore; the scripted presets in `src/game/presets.ts` remain as test fixtures only. Restart is available from the end-of-call card. Switching away from the browser tab pauses the session; resume from the overlay when returning.
 
 ## What is implemented
 
 - Sequential structured actions, phone selfie/rear cameras, Grandma-relative and camera-relative directions, procedural Grandma, room interactions, reaching, posture and hands.
+- Destination walks turn before moving, with eased movement, shared body/phone motion and distance-driven footsteps. Reduced motion removes decorative sway; a phone on the shelf stays fixed. Grandma's eye view and the caller's phone view use separate framing and large-fixture occlusion.
 - One solution: find the wrench in one of three toolboxes (the deal is seeded), carry it to the red pipe, bend down and turn it counterclockwise to seal it. The screwdriver and hammer are decoys.
 - Five minutes to flooding with no intervention. One-use towels and bucket add at most 30 and 45 seconds at the initial leak rate; they cannot solve the leak.
 - Seeded stress-dependent ambiguity (15/30/45%). Precise instructions have no random interpretation failures. Unclear targets/directions return structured clarification results.
@@ -56,7 +58,7 @@ There is no developer console anymore; the scripted presets in `src/game/presets
 | Hackathon alignment | [Reviewed starter guidance](docs/HACKATHON.md) |
 | Validation | [Checks and remaining browser verification](docs/VALIDATION.md) |
 
-The source includes the OpenAI Agents SDK voice adapter, procedural 3D room and character components, title/caller images, original synthesized sounds, and Google Fonts loaded by `index.html`. Provider credentials stay server-side. The hosted API relays the initial WebRTC connection, retains the provider call ID, and uses durable database admission limits. Visitors receive a single-use application token instead of the OpenAI key. Original audio recordings and raw GLBs remain in source but are excluded from the build. Typed-to-native-speech and camera/body tools have passed a live local check; microphone/device checks remain separate.
+The source includes the OpenAI Agents SDK voice adapter, procedural 3D room and character components, title/caller images, synthesized ambience, the restored incoming-call recording, and Google Fonts loaded by `index.html`. Provider credentials stay server-side. The hosted API relays the initial WebRTC connection, retains the provider call ID, and uses durable database admission limits. Visitors receive a single-use application token instead of the OpenAI key. Other supplied recordings and raw GLBs remain outside the build. Typed-to-native-speech and camera/body tools have passed a live local check; microphone/device checks remain separate.
 
 The command-session bridge accepts structured actions and handles same-run interruptions, stale responses, duplicate delivery, and ordered sequences that stop at the first issue. Offline instructions use this bridge. The Realtime adapter exposes tools backed by the same game controller. The simulation advances in fixed 50 ms steps, independent of browser frame rate.
 

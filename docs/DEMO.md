@@ -8,7 +8,9 @@ The browser demo accepts typed instructions without microphone access. When AI i
 
 The current game's visuals and UI are the design reference, as confirmed by Jeffrey for this demo. Images retain Jeff Miao's contribution records in `public/images/LICENSE.txt` and `downloads/LICENSE.txt`.
 
-Title music, water, alarm, and incoming-call tones are original procedural sounds in `src/view/demo-audio.ts`. The supplied recordings remain in source for reference and are not used or copied into the build. Only imported image assets ship; the large unrigged GLBs also remain outside the deployed build.
+Title music, water and alarm are procedural sounds in `src/view/demo-audio.ts`. At Jeffrey's request, the incoming-call screen again uses the existing `public/audio/iphone-ringtone.mp3`; it loops while ringing, pauses when hidden and stops immediately on Answer. Its recorded source information is in `public/audio/LICENSE.txt`. Other supplied recordings and the large unrigged GLBs remain outside the deployed build.
+
+The held camera and body share a physical pose. Destination walks turn before moving, ease into motion and drive footsteps from distance traveled. Phone sway is small and removed for reduced-motion users; shelf placement stays fixed in world space. Grandma's actual eye view is distinct from the phone's selected lens and follows the same bounded head pose used by the character. Viewport aspect, pitch and large furniture affect visibility. This is approximate game-object perception, not general computer vision or full rendered-mesh occlusion.
 
 ## Development
 
@@ -17,6 +19,8 @@ Use the Node version in `.nvmrc`, run `npm ci`, then `npm run dev`. `npm run che
 ## Voice
 
 Jeffrey selected OpenAI Realtime alone with typed fallback. Local AI becomes available when your own `OPENAI_API_KEY` from `.env.example` is configured before starting Vite. Typed messages and microphone speech share one Realtime agent and native spoken output. The call starts without asking for microphone access; the mic button enables it later. There are no forced speaking windows or automatic speaker muting. OpenAI generates native speech; there is no ElevenLabs proxy or key configuration. Secrets must never use a `VITE_` prefix or enter the browser bundle. SDK code loads only when connecting. A connection failure leaves scripted typed play available.
+
+Typed messages only interrupt existing or pending output; idle sends no longer clear an empty audio buffer. Recoverable provider request/cancellation errors keep the conversation connected. WebRTC buffer events track actual playback, including one continuous buffer spanning a tool response and its continuation; generation completion alone no longer marks Grandma as finished talking. Explicit low reasoning matches the auditions (the provider already defaults to low). Most spoken reactions are directed to stay within one short sentence.
 
 `src/voice/persona.ts` defines an original ornery Brooklyn grandmother with affectionate impatience, dry, understated humor and natural delivery with a light regional flavor. The agent, opening line and terminal response overrides share that direction. Playback is normal speed (1.0). The forced pitch/gravel/nasal/brisk direction has been removed. Jeffrey selected `coral` after the comparison; the game uses Coral on Mini.
 

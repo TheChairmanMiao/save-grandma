@@ -36,6 +36,7 @@ export default function App() {
   const seenMessages = useRef(new Set<string>());
   const pendingTyped = useRef<string[]>([]);
   const transcript = useRef<HTMLDivElement>(null);
+  const phoneElement = useRef<HTMLDivElement>(null);
   // Yao's realtime voice agent. Connects when Grandma's greeting begins; typed text stays as a fallback.
   const voice = useVoice();
   const voiceState = useRef(voice);
@@ -83,6 +84,18 @@ export default function App() {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', visibility); };
   }, []);
   useEffect(() => { transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'smooth' }); }, [lines]);
+  useEffect(() => {
+    const phone = phoneElement.current;
+    if (!phone) return;
+    const update = () => {
+      const { width, height } = phone.getBoundingClientRect();
+      if (width > 0 && height > 0) gameController.setCameraAspect(width / height);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(phone);
+    return () => observer.disconnect();
+  }, [world.runId]);
 
   const running = world.stage === 'running';
   const terminal = world.stage === 'won' || world.stage === 'lost';
@@ -178,9 +191,8 @@ export default function App() {
     {/* Connect inside the click so the mic prompt and audio unlock happen in the user gesture. */}
     {!started && <StartScreen voiceAvailable={VOICE_AVAILABLE} onStart={() => { setStarted(true); setIntro('playing'); if (VOICE_AVAILABLE) void voice.connect({ microphone: false }); }} />}
     <div className="stage" inert={!started}>
-      <div className={`phone ${mayday ? 'mayday' : ''}`} data-testid="phone" data-camera-mode={world.phone.mode} data-grandma-facing={world.grandma.yaw} data-voice-speaking={voice.speaking} data-voice-responding={voice.responding}>
-        {/* Grandma's hands are not steady: CSS shake layers scale with what she is doing. */}
-        <div className={`camera-view ${world.phone.placement === 'hand' && running ? 'handheld' : ''} ${world.active?.to ? 'walking' : ''} stress-${gameController.getObservation().stressBand}`} data-testid="camera-view"><Scene world={world} /></div>
+      <div ref={phoneElement} className={`phone ${mayday ? 'mayday' : ''}`} data-testid="phone" data-camera-mode={world.phone.mode} data-grandma-facing={world.grandma.yaw} data-voice-speaking={voice.speaking} data-voice-responding={voice.responding}>
+        <div className="camera-view" data-testid="camera-view"><Scene world={world} /></div>
 
         <div className="call-time"><span className={`dot ${running ? 'live' : ''}`} />{elapsed}</div>
         {intro === 'done' && running && <button type="button" className="call-help" onClick={() => { setHelpOpen(true); gameController.pause(); }}>How to play</button>}

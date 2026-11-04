@@ -1,8 +1,9 @@
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Group } from 'three';
+import { Euler, Group, Quaternion } from 'three';
 import type { ItemId } from '../game/types';
 import type { SceneFrame } from '../view/presentation';
+import { radians } from '../game/config';
 
 /**
  * Cartoon Grandma for the phone's front camera: big round head, oversized glasses, rosy cheeks.
@@ -37,11 +38,15 @@ export default function Grandma({ frame }: { frame: SceneFrame }) {
   const mouth = useRef<Group>(null);
   const leftLeg = useRef<Group>(null);
   const rightLeg = useRef<Group>(null);
-  const { bend, hands, animation } = frame.character;
+  const gaze = useRef(new Euler(0, 0, 0, 'YXZ'));
+  const upright = useRef(new Quaternion());
+  const aimed = useRef(new Quaternion());
+  const { hands } = frame.character;
 
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    const breath = (Math.sin(t * 1.7) + 1) / 2;
+  useFrame(() => {
+    const { bend, animation, motion, look } = frame.character;
+    const t = motion.reducedMotion ? 0 : frame.time;
+    const breath = motion.reducedMotion ? 0 : (Math.sin(t * 1.7) + 1) / 2;
     if (torso.current) {
       torso.current.scale.set(1 + breath * 0.012, 1 + breath * 0.03, 1 + breath * 0.012);
       torso.current.rotation.x = bend * 0.75;
@@ -49,9 +54,12 @@ export default function Grandma({ frame }: { frame: SceneFrame }) {
       torso.current.position.y = -bend * 0.2;
     }
     if (head.current) {
-      head.current.rotation.z = Math.sin(t * 0.8) * 0.05;
-      head.current.rotation.y = Math.sin(t * 0.45) * 0.09;
-      head.current.rotation.x = Math.sin(t * 1.1) * 0.03 - bend * 0.5;
+      gaze.current.set(-radians(look.pitch) + Math.sin(t * 1.1) * 0.03, radians(look.yaw) + Math.sin(t * 0.45) * 0.09, Math.sin(t * 0.8) * 0.05, 'YXZ');
+      // Cancel the parent torso tilt before applying the shared eye direction.
+      upright.current.identity();
+      if (torso.current) upright.current.copy(torso.current.quaternion).invert();
+      aimed.current.setFromEuler(gaze.current);
+      head.current.quaternion.copy(upright.current).multiply(aimed.current);
       head.current.position.y = 1.42 + breath * 0.012;
     }
     if (eyes.current) {
@@ -63,7 +71,7 @@ export default function Grandma({ frame }: { frame: SceneFrame }) {
       const talking = animation.name !== 'Idle_Standing' && animation.name !== 'Idle_Bent' ? 0.4 : 0.18;
       mouth.current.scale.y = 1 + Math.max(0, Math.sin(t * 7.3) * Math.sin(t * 2.1)) * talking;
     }
-    const walk = animation.name === 'Walk' ? Math.sin(t * 9) * 0.4 : 0;
+    const walk = Math.sin(motion.phase) * motion.weight * 0.4;
     if (leftLeg.current) leftLeg.current.rotation.x = walk;
     if (rightLeg.current) rightLeg.current.rotation.x = -walk;
   });
